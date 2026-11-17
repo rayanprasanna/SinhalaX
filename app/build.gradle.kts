@@ -1,4 +1,12 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
+
+// Secrets live in local.properties (never committed). Add:  KLIPY_API_KEY=your_key
+val localProps = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+val klipyApiKey: String = localProps.getProperty("KLIPY_API_KEY") ?: System.getenv("KLIPY_API_KEY") ?: ""
 
 plugins {
     alias(libs.plugins.android.application)
@@ -14,8 +22,10 @@ android {
         minSdk = 24
         //noinspection EditedTargetSdkVersion
         targetSdk = 37
-        versionCode = 6
-        versionName = "0.3.3"
+        versionCode = 11
+        versionName = "0.4.1"
+
+        buildConfigField("String", "KLIPY_API_KEY", "\"$klipyApiKey\"")
     }
 
     buildTypes {
@@ -43,6 +53,7 @@ kotlin {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 

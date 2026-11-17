@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Stickers are downloaded here just long enough to hand them to the chat app, then cleaned up. -->
+<paths>
+    <cache-path name="stickers" path="stickers/" />
+</paths>

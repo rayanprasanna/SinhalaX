@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Tune
@@ -47,12 +48,13 @@ import dev.valhalla.sinhalax.ui.screens.LearnedWordsScreen
 import dev.valhalla.sinhalax.ui.screens.OnboardingScreen
 import dev.valhalla.sinhalax.ui.screens.PrivacyScreen
 import dev.valhalla.sinhalax.ui.screens.SettingsScreen
+import dev.valhalla.sinhalax.ui.screens.StudioScreen
 import dev.valhalla.sinhalax.ui.screens.ThemesScreen
-import kotlin.time.Duration.Companion.milliseconds
 
 enum class Tab(val label: String, val icon: ImageVector) {
     HOME("Home", Icons.Outlined.Home),
     THEMES("Themes", Icons.Outlined.Palette),
+    STUDIO("Studio", Icons.Outlined.AutoAwesome),
     SETTINGS("Settings", Icons.Outlined.Tune),
     GUIDE("Guide", Icons.AutoMirrored.Outlined.MenuBook),
 }
@@ -85,7 +87,7 @@ fun AppRoot(app: SinhalaXApp) {
         if (needsSetup) {
             cameFromSetup = true
         } else if (cameFromSetup) {
-            delay(SetupCompleteDurationMs.milliseconds)
+            delay(SetupCompleteDurationMs)
             cameFromSetup = false
         }
     }
@@ -164,6 +166,7 @@ private fun MainScreen(app: SinhalaXApp, settings: KeyboardSettings, status: Ime
                         onOpenPrivacy = { showPrivacy = true },
                     )
                     Tab.THEMES -> ThemesScreen(app, settings)
+                    Tab.STUDIO -> StudioScreen()
                     Tab.SETTINGS -> SettingsScreen(app, settings, onOpenLearnedWords = { showLearned = true })
                     Tab.GUIDE -> GuideScreen()
                 }

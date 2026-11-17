@@ -1,5 +1,7 @@
 package dev.valhalla.sinhalax.ime
 
+import dev.valhalla.sinhalax.keyboard.StickerOutcome
+import dev.valhalla.sinhalax.store.KlipyApi
 import android.content.ClipboardManager
 import android.content.Intent
 import android.inputmethodservice.InputMethodService
@@ -31,7 +33,8 @@ import kotlinx.coroutines.launch
  * The input method. Hosts the Compose keyboard, so it provides the lifecycle,
  * ViewModel store and saved-state owners Compose expects from an Activity.
  *
- * Privacy: this service never makes a network request (only the app's theme store does). Only finished Sinhala words are
+ * Privacy: the only network use here is the GIF / sticker panel (KLIPY), and only while it is open. What you type is never
+ * sent anywhere. Only finished Sinhala words are
  * counted in an on-device personal dictionary, which the user can view, delete or turn off.
  */
 class SinhalaXImeService :
@@ -53,6 +56,7 @@ class SinhalaXImeService :
     private lateinit var controller: KeyboardController
     private val settingsState = mutableStateOf(KeyboardSettings())
     private val clipItems = mutableStateOf<List<String>>(emptyList())
+    private val canSendSticker = mutableStateOf(false)
 
     private val clipboardManager: ClipboardManager by lazy { getSystemService(ClipboardManager::class.java) }
     private val clipListener = ClipboardManager.OnPrimaryClipChangedListener { onClipChanged() }
@@ -106,6 +110,8 @@ class SinhalaXImeService :
                     onHide = { requestHideSelf(0) },
                     onDeleteClip = { text -> lifecycleScope.launch { app.clipboard.remove(text) } },
                     onClearClips = { lifecycleScope.launch { app.clipboard.clear() } },
+                    canSendSticker = canSendSticker.value,
+                    onSendSticker = ::sendSticker,
                 )
             }
         }
@@ -122,6 +128,20 @@ class SinhalaXImeService :
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
         controller.onStartInputView()
+        canSendSticker.value = StickerSender.canSend(info)
+    }
+
+    /** Sends a KLIPY GIF / sticker / meme into the app being typed in. Network is used only for this tap. */
+    private suspend fun sendSticker(media: KlipyApi.Media, query: String?): StickerOutcome {
+        controller.commitComposing()
+        return when (StickerSender.send(this, currentInputEditorInfo, currentInputConnection, media)) {
+            StickerSender.Result.SENT -> {
+                lifecycleScope.launch { KlipyApi.reportShare(this@SinhalaXImeService, media.kind, media.slug, query) }
+                StickerOutcome.SENT
+            }
+            StickerSender.Result.NOT_SUPPORTED -> StickerOutcome.NOT_SUPPORTED
+            StickerSender.Result.FAILED -> StickerOutcome.FAILED
+        }
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {

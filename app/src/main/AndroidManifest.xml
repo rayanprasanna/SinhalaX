@@ -2,8 +2,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!--
-        Internet is used ONLY by the app's theme store (backgrounds and key sounds from Audio Hub).
-        The keyboard service itself never makes a network request, and nothing you type is sent.
+        Internet is used for the theme store (backgrounds and key sounds from Audio Hub) and for
+        GIFs, stickers, memes and AI Emoji (KLIPY), only when the user opens those screens or panels.
+        Nothing typed in other apps is ever sent.
     -->
     <uses-permission android:name="android.permission.INTERNET" />
 
@@ -25,6 +26,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Shares downloaded stickers with the chat app the user is typing in. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.stickers"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
         <service
             android:name=".ime.SinhalaXImeService"

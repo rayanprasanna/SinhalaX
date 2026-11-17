@@ -70,6 +70,31 @@ Themes screen → **Built-in · Backgrounds · Sounds**. Data comes from the pub
   The chosen sound is downloaded and played with `SoundPool`; volume slider included.
 - The keyboard service never touches the network; it only reads the downloaded files.
 
+## Studio (v0.4.1)
+New **Studio** tab (Fancy text · FM converter · Stickers) and two new keyboard buttons (**Aa**, sticker).
+
+- **Fancy text** (`core/engine/FancyText.kt`): 19 Unicode styles (bold, script, gothic, outline, bubbles,
+  squares, wide, small caps, strikethrough, upside down …) plus frames that also wrap Sinhala. In the
+  keyboard, **Aa** picks a style and English letters/digits are typed in it (never in password fields).
+- **FM converter** (`core/engine/FmConverter.kt`): Unicode ⇄ FM Abhaya (FM family). Kotlin port of the
+  MIT-licensed converter from legacy-fonts-to-unicode / Pandukabhaya (akuruAI) / UCSC LTRL; notices kept in
+  the file header. Verified identical to the original on 20,009 dictionary words; 20,008 round-trip exactly.
+- **GIFs · Stickers · Memes · AI Emoji (KLIPY)** (`store/KlipyApi.kt`, `ime/StickerSender.kt`): the keyboard's
+  media panel (sticker icon) has a tab per kind with Trending + categories, and sends the item straight into
+  the chat with Android's rich-content API, in the best format the app accepts (GIFs as GIF, stickers as WebP,
+  memes as JPEG). The Studio has search + share for GIFs/stickers/memes, and an **AI Emoji** generator
+  (`POST emojis/generate`, then polls `emojis/generated/{id}` every 2 s for up to a minute).
+  "Powered by KLIPY" is shown wherever KLIPY content appears. Ad items are skipped for now. Files for
+  sending live in `cache/stickers/` and are deleted after 10 minutes. Clips (video) are not included.
+
+### KLIPY API key
+Put your key in `local.properties` (already git-ignored), then sync/rebuild:
+```
+KLIPY_API_KEY=your_key_here
+```
+It becomes `BuildConfig.KLIPY_API_KEY`. Without it the sticker screens show a "not set up" message.
+Before release, move the key from TESTING to production in the KLIPY Partner dashboard.
+
 ## Next
 1. English word suggestions (same engine with an English list).
 2. Downloadable fonts / styled text (Audio Hub would need a fonts endpoint).

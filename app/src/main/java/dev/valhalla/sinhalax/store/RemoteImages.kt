@@ -44,6 +44,8 @@ fun RemoteImage(
     placeholder: Color,
     contentDescription: String?,
     modifier: Modifier = Modifier,
+    /** Fit (whole image visible, e.g. stickers) instead of crop. */
+    fit: Boolean = false,
 ) {
     val context = LocalContext.current
     val bitmap by produceState<ImageBitmap?>(initialValue = null, url, cacheKey) {
@@ -54,7 +56,7 @@ fun RemoteImage(
             Image(
                 bitmap = it,
                 contentDescription = contentDescription,
-                contentScale = ContentScale.Crop,
+                contentScale = if (fit) ContentScale.Fit else ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
             )
         }

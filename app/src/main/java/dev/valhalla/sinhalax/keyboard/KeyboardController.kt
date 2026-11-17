@@ -8,6 +8,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import dev.valhalla.sinhalax.data.KeyboardSettings
+import dev.valhalla.sinhalax.engine.FancyText
 import dev.valhalla.sinhalax.engine.SinglishScheme
 import dev.valhalla.sinhalax.engine.SinglishTransliterator
 import dev.valhalla.sinhalax.prediction.Predictor
@@ -15,7 +16,7 @@ import dev.valhalla.sinhalax.prediction.Predictor
 enum class Language { SINHALA, ENGLISH }
 enum class KeyMode { LETTERS, SYMBOLS, SYMBOLS2 }
 enum class ShiftState { OFF, ONCE, LOCKED }
-enum class Panel { KEYS, EMOJI, CLIPBOARD }
+enum class Panel { KEYS, EMOJI, CLIPBOARD, FANCY, STICKERS }
 
 enum class EnterAction(val imeAction: Int) {
     NEWLINE(EditorInfo.IME_ACTION_NONE),
@@ -69,6 +70,9 @@ class KeyboardController(
 
     /** Password and similar fields: English only, no preview, nothing captured. */
     var restrictedField by mutableStateOf(false); private set
+
+    /** Active fancy-text style (English letters and digits are typed in it), or null. */
+    var fancyStyle by mutableStateOf<FancyText.Style?>(null); private set
 
     private val composing = StringBuilder()
     private var editorInfo: EditorInfo? = null
@@ -227,6 +231,12 @@ class KeyboardController(
         panel = if (panel == target) Panel.KEYS else target
     }
 
+    /** Picks a fancy style (or null to turn it off) and goes back to the keys. */
+    fun setFancy(style: FancyText.Style?) {
+        fancyStyle = style?.takeIf { it.keyboardSafe }
+        panel = Panel.KEYS
+    }
+
     fun showKeys() {
         panel = Panel.KEYS
     }
@@ -277,7 +287,8 @@ class KeyboardController(
         } else {
             // Punctuation ends a word like space does, so it applies the auto-correction too.
             commitWord(applyCorrection = c != null && !c.isLetterOrDigit())
-            commit(text)
+            val style = fancyStyle
+            commit(if (style != null && !restrictedField && c != null && c.isLetterOrDigit()) style.apply(text) else text)
         }
         if (shift == ShiftState.ONCE) shift = ShiftState.OFF
         updateAutoCaps()

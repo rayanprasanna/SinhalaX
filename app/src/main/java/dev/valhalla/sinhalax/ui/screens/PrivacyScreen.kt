@@ -35,9 +35,20 @@ fun PrivacyScreen(onBack: () -> Unit) {
         item {
             InfoCard(
                 Icons.Outlined.CloudOff,
-                "Typing never goes online",
-                "The keyboard works fully offline and never makes a network request. Only the Themes store in this app " +
-                    "goes online, to download backgrounds and key sounds you choose. Nothing you type is ever sent.",
+                "Your typing never goes online",
+                "Typing, suggestions and fancy text all work offline. The app goes online only for the Themes store " +
+                    "(backgrounds and sounds you pick) and for GIFs, stickers, memes and AI Emoji, while you have them open. " +
+                    "Nothing you type in other apps is ever sent.",
+            )
+        }
+        item {
+            InfoCard(
+                Icons.Outlined.Public,
+                "GIFs, stickers and AI Emoji by KLIPY",
+                "When you open them, SinhalaX asks KLIPY for lists and sends a random ID made for this install " +
+                    "(not your name, number or phone ID). Search words you type in the Studio, and descriptions you give " +
+                    "for AI Emoji, are sent to KLIPY. When you send one, KLIPY is told which item was shared. " +
+                    "KLIPY's own privacy policy applies.",
             )
         }
         item {

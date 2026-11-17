@@ -42,7 +42,7 @@ class Predictor(
         //    of something far more common — unless they've chosen that spelling themselves before.
         val top = alternatives.firstOrNull()?.first
         val corrected = autoCorrect && latin.length >= 2 && top != null && isConfident(top) && shouldReplace(primary, top)
-        val best = if (corrected) top else primary
+        val best = if (corrected) top!! else primary
 
         // 3. Completions for the word still being typed.
         val ranked = (alternatives + complete(latin))

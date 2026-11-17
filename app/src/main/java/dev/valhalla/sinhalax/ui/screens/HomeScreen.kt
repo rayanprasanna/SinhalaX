@@ -197,8 +197,8 @@ fun HomeScreen(status: ImeStatus, onOpenTab: (Tab) -> Unit, onOpenPrivacy: () ->
                     Column {
                         Text("Coming next", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onPrimaryContainer)
                         Text(
-                            "GIFs and stickers • English word suggestions • Downloadable fonts • " +
-                                "Fancy text studio • Unicode → FM font converter • Tamil layout",
+                            "GIFs • English word suggestions • Wijesekara layout • Downloadable fonts • " +
+                                "Sticker maker • Tamil layout",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onPrimaryContainer,
                         )

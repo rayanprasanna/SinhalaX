@@ -1,6 +1,7 @@
 package dev.valhalla.sinhalax.keyboard
 
-import android.annotation.SuppressLint
+import androidx.compose.ui.text.font.FontFamily
+import dev.valhalla.sinhalax.store.KlipyApi
 import androidx.compose.foundation.layout.BoxWithConstraints
 import android.content.res.Configuration
 import androidx.compose.foundation.layout.heightIn
@@ -95,13 +96,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.valhalla.sinhalax.data.KeyboardSettings
 import dev.valhalla.sinhalax.engine.SinglishTransliterator
-import androidx.core.graphics.toColorInt
 
 /**
  * The full keyboard: suggestion/tool strip + keys, emoji or clipboard panel.
  * Used by the IME service and, with a null InputConnection, as the live preview inside the app.
  */
-@SuppressLint("ConfigurationScreenWidthHeight")
 @Composable
 fun SinhalaXKeyboard(
     controller: KeyboardController,
@@ -113,6 +112,10 @@ fun SinhalaXKeyboard(
     onHide: () -> Unit = {},
     onDeleteClip: (String) -> Unit = {},
     onClearClips: () -> Unit = {},
+    /** Whether the current text box accepts images (stickers). */
+    canSendSticker: Boolean = false,
+    /** Sends a sticker into the current app; null in the in-app preview. */
+    onSendSticker: (suspend (KlipyApi.Media, String?) -> StickerOutcome)? = null,
 ) {
     val backgroundImage = rememberBackgroundImage(settings.backgroundPath)
     val baseTheme = KeyboardThemes.byId(settings.themeId)
@@ -141,7 +144,7 @@ fun SinhalaXKeyboard(
         (50f * settings.heightScale).dp
     }
     val panelHeight = rowHeight * rows + 8.dp
-    val layoutSettings = if (numberRow == settings.numberRow) settings else settings.copy(numberRow = false)
+    val layoutSettings = if (numberRow == settings.numberRow) settings else settings.copy(numberRow = numberRow)
     val background: Brush = if (theme.background.size > 1) {
         Brush.verticalGradient(theme.background)
     } else {
@@ -163,12 +166,13 @@ fun SinhalaXKeyboard(
             Panel.CLIPBOARD -> ClipboardPanel(
                 controller, theme, feedback, clipItems, panelHeight, onDeleteClip, onClearClips,
             )
+            Panel.FANCY -> FancyPanel(controller, theme, feedback, panelHeight)
+            Panel.STICKERS -> MediaPanel(theme, feedback, panelHeight, canSendSticker, onSendSticker)
         }
     }
 }
 
 /** Non-interactive-safe keyboard for the app's Themes and Settings screens. */
-@SuppressLint("ConfigurationScreenWidthHeight")
 @Composable
 fun KeyboardPreview(settings: KeyboardSettings, modifier: Modifier = Modifier) {
     val app = LocalContext.current.applicationContext as? dev.valhalla.sinhalax.SinhalaXApp
@@ -268,7 +272,7 @@ private fun rememberKeyFeedback(
 }
 
 private fun parseHex(hex: String, fallback: Color): Color =
-    if (hex.isBlank()) fallback else runCatching { Color(hex.toColorInt()) }.getOrDefault(fallback)
+    if (hex.isBlank()) fallback else runCatching { Color(android.graphics.Color.parseColor(hex)) }.getOrDefault(fallback)
 
 /** Draws [image] to fill the area, cropping the overflow evenly (like ContentScale.Crop). */
 private fun DrawScope.drawCentreCrop(image: ImageBitmap) {
@@ -340,6 +344,19 @@ private fun TopStrip(
                 controller.toggleLanguage()
             }
             Spacer(Modifier.weight(1f))
+            ToolbarText(
+                "Aa",
+                description = "Fancy text",
+                theme = theme,
+                active = controller.panel == Panel.FANCY || controller.fancyStyle != null,
+            ) {
+                feedback.press()
+                controller.togglePanel(Panel.FANCY)
+            }
+            ToolbarIcon(StickerIcon, "GIFs and stickers", theme, controller.panel == Panel.STICKERS) {
+                feedback.press()
+                controller.togglePanel(Panel.STICKERS)
+            }
             ToolbarIcon(Icons.Outlined.EmojiEmotions, "Emoji", theme, controller.panel == Panel.EMOJI) {
                 feedback.press()
                 controller.togglePanel(Panel.EMOJI)
@@ -382,7 +399,7 @@ private fun ToolbarIcon(
 ) {
     Box(
         Modifier
-            .size(42.dp)
+            .size(40.dp)
             .clip(CircleShape)
             .background(if (active) theme.accent.copy(alpha = 0.2f) else Color.Transparent)
             .clickable(onClick = onClick),
@@ -393,6 +410,32 @@ private fun ToolbarIcon(
             contentDescription = description,
             tint = if (active) theme.accent else theme.toolbarText,
             modifier = Modifier.size(22.dp),
+        )
+    }
+}
+
+@Composable
+private fun ToolbarText(
+    text: String,
+    description: String,
+    theme: KeyboardTheme,
+    active: Boolean,
+    onClick: () -> Unit,
+) {
+    Box(
+        Modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .background(if (active) theme.accent.copy(alpha = 0.2f) else Color.Transparent)
+            .clickable(onClickLabel = description, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text,
+            color = if (active) theme.accent else theme.toolbarText,
+            fontSize = 17.sp,
+            fontWeight = FontWeight.Bold,
+            fontFamily = FontFamily.Serif,
         )
     }
 }
@@ -651,71 +694,71 @@ private fun KeyContent(
                 null
             }
             BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                // Short keys (landscape, small height setting): smaller text, hint tucked in the corner.
-                val compact = maxHeight < 46.dp
-                val letterSp = (if (label.length == 1) (if (compact) 16 else 21) else (if (compact) 12 else 15)) * font
-                if (hint == null) {
+            // Short keys (landscape, small height setting): smaller text, hint tucked in the corner.
+            val compact = maxHeight < 46.dp
+            val letterSp = (if (label.length == 1) (if (compact) 16 else 21) else (if (compact) 12 else 15)) * font
+            if (hint == null) {
+                Text(
+                    text = label,
+                    color = color,
+                    fontSize = letterSp.sp,
+                    lineHeight = (letterSp + 2).sp,
+                    maxLines = 1,
+                )
+            } else if (compact) {
+                Box(Modifier.fillMaxSize()) {
+                    Text(
+                        text = hint,
+                        color = theme.hint,
+                        fontSize = (8 * font).sp,
+                        lineHeight = (9 * font).sp,
+                        maxLines = 1,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = 1.dp, end = 3.dp),
+                    )
                     Text(
                         text = label,
                         color = color,
                         fontSize = letterSp.sp,
-                        lineHeight = (letterSp + 2).sp,
+                        lineHeight = (letterSp + 1).sp,
                         maxLines = 1,
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .padding(top = 3.dp),
                     )
-                } else if (compact) {
-                    Box(Modifier.fillMaxSize()) {
-                        Text(
-                            text = hint,
-                            color = theme.hint,
-                            fontSize = (8 * font).sp,
-                            lineHeight = (9 * font).sp,
-                            maxLines = 1,
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(top = 1.dp, end = 3.dp),
-                        )
+                }
+            } else {
+                // Hint gets its own row at the top; the letter is centred in the space below.
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(start = 2.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+                ) {
+                    Text(
+                        text = hint,
+                        color = theme.hint,
+                        fontSize = (10 * font).sp,
+                        lineHeight = (12 * font).sp,
+                        maxLines = 1,
+                        modifier = Modifier.align(Alignment.End),
+                    )
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentAlignment = Alignment.Center,
+                    ) {
                         Text(
                             text = label,
                             color = color,
-                            fontSize = letterSp.sp,
-                            lineHeight = (letterSp + 1).sp,
+                            fontSize = ((if (label.length == 1) 19 else 14) * font).sp,
+                            lineHeight = ((if (label.length == 1) 21 else 16) * font).sp,
                             maxLines = 1,
-                            modifier = Modifier
-                                .align(Alignment.Center)
-                                .padding(top = 3.dp),
                         )
-                    }
-                } else {
-                    // Hint gets its own row at the top; the letter is centred in the space below.
-                    Column(
-                        Modifier
-                            .fillMaxSize()
-                            .padding(start = 2.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
-                    ) {
-                        Text(
-                            text = hint,
-                            color = theme.hint,
-                            fontSize = (10 * font).sp,
-                            lineHeight = (12 * font).sp,
-                            maxLines = 1,
-                            modifier = Modifier.align(Alignment.End),
-                        )
-                        Box(
-                            Modifier
-                                .fillMaxWidth()
-                                .weight(1f),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                text = label,
-                                color = color,
-                                fontSize = ((if (label.length == 1) 19 else 14) * font).sp,
-                                lineHeight = ((if (label.length == 1) 21 else 16) * font).sp,
-                                maxLines = 1,
-                            )
-                        }
                     }
                 }
+            }
             }
         }
     }
