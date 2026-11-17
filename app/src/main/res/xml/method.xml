@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    No <subtype> entries: Android then lists the keyboard by the service label, "SinhalaX".
+    Sinhala / English switching happens inside the keyboard (the සිං · En chip and the globe key).
+-->
+<input-method xmlns:android="http://schemas.android.com/apk/res/android"
+    android:settingsActivity="dev.valhalla.sinhalax.MainActivity"
+    android:supportsSwitchingToNextInputMethod="true" />
