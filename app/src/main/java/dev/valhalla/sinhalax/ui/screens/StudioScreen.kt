@@ -1,12 +1,6 @@
 package dev.valhalla.sinhalax.ui.screens
 
-import android.graphics.BitmapFactory
-import androidx.compose.foundation.Image
-import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material3.FilterChip
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
-import kotlinx.coroutines.delay
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -82,6 +76,8 @@ import dev.valhalla.sinhalax.engine.FancyText
 import dev.valhalla.sinhalax.engine.FmConverter
 import dev.valhalla.sinhalax.ime.StickerSender
 import dev.valhalla.sinhalax.store.KlipyApi
+import dev.valhalla.sinhalax.keyboard.icon
+import dev.valhalla.sinhalax.store.AnimatedRemoteImage
 import dev.valhalla.sinhalax.store.RemoteImage
 import kotlinx.coroutines.launch
 
@@ -89,7 +85,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun StudioScreen() {
     var tab by rememberSaveable { mutableIntStateOf(0) }
-    val tabs = listOf("Fancy", "FM", "GIFs", "AI Emoji")
+    val tabs = listOf("Fancy text", "FM converter", "GIFs")
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.padding(horizontal = 16.dp)) {
             ScreenTitle("Studio", "Make your text stand out.")
@@ -111,8 +107,7 @@ fun StudioScreen() {
             when (tab) {
                 0 -> FancyStudio()
                 1 -> FmStudio()
-                2 -> MediaStudio()
-                else -> AiEmojiStudio()
+                else -> MediaStudio()
             }
         }
     }
@@ -331,7 +326,7 @@ private fun MediaStudio() {
         }
     }
 
-    val wide = kind == KlipyApi.Kind.GIFS || kind == KlipyApi.Kind.MEMES
+    val wide = kind.isWide
     LazyVerticalGrid(
         columns = GridCells.Adaptive(if (wide) 150.dp else 96.dp),
         modifier = Modifier.fillMaxSize(),
@@ -342,8 +337,13 @@ private fun MediaStudio() {
         item(span = { GridItemSpan(maxLineSpan) }) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    KlipyApi.Kind.entries.filter { it != KlipyApi.Kind.AI_EMOJI }.forEach { k ->
-                        FilterChip(selected = kind == k, onClick = { kind = k }, label = { Text(k.label) })
+                    KlipyApi.Kind.entries.forEach { k ->
+                        FilterChip(
+                            selected = kind == k,
+                            onClick = { kind = k },
+                            label = { Text(k.label) },
+                            leadingIcon = { Icon(k.icon, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                        )
                     }
                 }
                 OutlinedTextField(
@@ -400,15 +400,16 @@ private fun MediaStudio() {
                         },
                     contentAlignment = Alignment.Center,
                 ) {
-                    RemoteImage(
-                        url = media.thumbUrl,
+                    AnimatedRemoteImage(
+                        animatedUrl = media.animatedUrl,
+                        stillUrl = media.thumbUrl,
                         cacheKey = media.cacheKey,
                         placeholder = Color.Transparent,
                         contentDescription = media.title,
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(if (wide) 0.dp else 8.dp),
-                        fit = !wide,
+                            .padding(if (kind.cropToFill) 0.dp else 8.dp),
+                        fit = !kind.cropToFill,
                     )
                     if (sharingKey == media.cacheKey) CircularProgressIndicator(Modifier.size(24.dp))
                 }
@@ -418,10 +419,11 @@ private fun MediaStudio() {
 }
 
 private suspend fun shareMedia(context: Context, media: KlipyApi.Media, query: String?) {
-    val mime = media.kind.sendPreference.firstOrNull { it in media.files } ?: return
+    val mime = media.sendOrder.firstOrNull() ?: return
     try {
         val file = KlipyApi.downloadForSending(context, media.files.getValue(mime), media.cacheKey, KlipyApi.extensionFor(mime))
         shareFile(context, file, mime, "Share")
+        KlipyApi.Recents.add(context, media)
         KlipyApi.reportShare(context, media.kind, media.slug, query)
     } catch (e: Exception) {
         Toast.makeText(context, "Couldn't share this. Try again.", Toast.LENGTH_SHORT).show()
@@ -435,170 +437,4 @@ private fun shareFile(context: Context, file: java.io.File, mime: String, title:
         .putExtra(Intent.EXTRA_STREAM, uri)
         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     context.startActivity(Intent.createChooser(send, title).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-}
-
-// ------------------------------------------------------------------ AI Emoji (KLIPY)
-
-private sealed interface EmojiState {
-    data object Idle : EmojiState
-    data object Working : EmojiState
-    data class Ready(val bitmap: ImageBitmap, val bytes: ByteArray, val mime: String) : EmojiState
-    data class Error(val message: String) : EmojiState
-}
-
-@Composable
-private fun AiEmojiStudio() {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var prompt by rememberSaveable { mutableStateOf("") }
-    var state by remember { mutableStateOf<EmojiState>(EmojiState.Idle) }
-    val examples = listOf("Happy coconut wearing sunglasses", "Elephant dancing in the rain", "Cup of Ceylon tea with hearts", "Sleepy cat on a laptop")
-
-    fun generate() {
-        val text = prompt.trim()
-        if (text.isEmpty() || state == EmojiState.Working) return
-        state = EmojiState.Working
-        scope.launch {
-            state = try {
-                val id = KlipyApi.generateEmoji(text)
-                var result: EmojiState = EmojiState.Error("Taking too long. Try again.")
-                // Generation runs on KLIPY's side; check every 2 seconds for up to a minute.
-                for (attempt in 0 until 30) {
-                    delay(2_000)
-                    when (val status = KlipyApi.emojiStatus(id)) {
-                        is KlipyApi.EmojiStatus.Done -> {
-                            val bmp = BitmapFactory.decodeByteArray(status.bytes, 0, status.bytes.size)
-                            result = if (bmp != null) EmojiState.Ready(bmp.asImageBitmap(), status.bytes, status.mimeType)
-                            else EmojiState.Error("Couldn't open the result. Try again.")
-                            break
-                        }
-                        KlipyApi.EmojiStatus.Failed -> {
-                            result = EmojiState.Error("Couldn't make that one. Try a different description.")
-                            break
-                        }
-                        KlipyApi.EmojiStatus.Processing -> Unit
-                    }
-                }
-                result
-            } catch (e: Exception) {
-                EmojiState.Error(
-                    if (KlipyApi.isConfigured) "Couldn't reach KLIPY. Check your connection." else "This needs a KLIPY API key in local.properties.",
-                )
-            }
-        }
-    }
-
-    LazyColumn(
-        Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        item {
-            OutlinedTextField(
-                value = prompt,
-                onValueChange = { prompt = it.take(300) },
-                label = { Text("Describe your emoji") },
-                placeholder = { Text("e.g. Happy coconut wearing sunglasses") },
-                minLines = 2,
-                supportingText = { Text("${prompt.length}/300 · English works best") },
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { generate() }),
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-            )
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                Button(
-                    onClick = { generate() },
-                    enabled = prompt.isNotBlank() && state != EmojiState.Working,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Icon(Icons.Outlined.AutoAwesome, null, Modifier.size(18.dp))
-                    Spacer(Modifier.size(8.dp))
-                    Text(if (state == EmojiState.Working) "Creating…" else "Create emoji")
-                }
-            }
-        }
-        item {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(1.6f)
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(MaterialTheme.colorScheme.surfaceContainer),
-                contentAlignment = Alignment.Center,
-            ) {
-                when (val st = state) {
-                    EmojiState.Idle -> Text(
-                        "Your emoji appears here",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    EmojiState.Working -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator()
-                        Text(
-                            "Creating your emoji… this can take up to a minute",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 12.dp),
-                        )
-                    }
-                    is EmojiState.Ready -> Image(
-                        bitmap = st.bitmap,
-                        contentDescription = prompt,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(16.dp),
-                    )
-                    is EmojiState.Error -> Text(
-                        st.message,
-                        color = MaterialTheme.colorScheme.error,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(24.dp),
-                    )
-                }
-            }
-        }
-        val ready = state as? EmojiState.Ready
-        if (ready != null) {
-            item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = {
-                            scope.launch {
-                                runCatching {
-                                    val file = KlipyApi.saveForSending(
-                                        context, ready.bytes, "ai_emoji_${System.currentTimeMillis()}", KlipyApi.extensionFor(ready.mime),
-                                    )
-                                    shareFile(context, file, ready.mime, "Share emoji")
-                                }.onFailure { Toast.makeText(context, "Couldn't share. Try again.", Toast.LENGTH_SHORT).show() }
-                            }
-                        },
-                        modifier = Modifier.weight(1f),
-                    ) { Text("Share") }
-                    OutlinedButton(onClick = { generate() }) { Text("Try again") }
-                }
-            }
-        }
-        item { SectionLabel("Ideas") }
-        items(examples) { idea ->
-            Text(
-                idea,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.surfaceContainer)
-                    .clickable { prompt = idea }
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-            )
-        }
-        item {
-            Text(
-                "AI Emoji are made by KLIPY. Your description is sent to KLIPY to create the image. Powered by KLIPY.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 4.dp),
-            )
-        }
-    }
 }

@@ -16,7 +16,10 @@ import dev.valhalla.sinhalax.prediction.Predictor
 enum class Language { SINHALA, ENGLISH }
 enum class KeyMode { LETTERS, SYMBOLS, SYMBOLS2 }
 enum class ShiftState { OFF, ONCE, LOCKED }
-enum class Panel { KEYS, EMOJI, CLIPBOARD, FANCY, STICKERS }
+enum class Panel { KEYS, EMOJI, CLIPBOARD, FANCY, VOICE }
+
+/** One tap of ✓ Translate: what to translate and from which language. */
+data class TranslateRequest(val id: Int, val text: String, val from: Language)
 
 enum class EnterAction(val imeAction: Int) {
     NEWLINE(EditorInfo.IME_ACTION_NONE),
@@ -50,16 +53,23 @@ enum class EnterAction(val imeAction: Int) {
  * In Sinhala mode, Latin letters go into a composing buffer. The Sinhala result is shown
  * in the editor as composing text and committed on space, punctuation, enter or a suggestion tap.
  *
- * [inputConnection] returns null in the in-app preview, so every call is null-safe.
+ * [appConnection] returns null in the in-app preview, so every call is null-safe.
+ *
+ * Translate mode: while [translateActive], everything typed (Singlish conversion, suggestions,
+ * voice) goes into the keyboard's own translate box ([translateConnection]) instead of the app.
+ * [translateText] mirrors the box. ✓ Translate (or enter) publishes it as [translateRequest]; the
+ * IME service translates it, types the result into the app and calls [onTranslated].
  * [predictor] returns null while the dictionary is still loading; plain conversion is used meanwhile.
  * [onWordLearned] receives committed Sinhala words for the on-device personal dictionary.
  */
 class KeyboardController(
     private val engine: SinglishTransliterator,
-    private val inputConnection: () -> InputConnection?,
-    private val sendKey: (Int) -> Unit,
+    private val appConnection: () -> InputConnection?,
+    private val sendAppKey: (Int) -> Unit,
     private val predictor: () -> Predictor? = { null },
     private val onWordLearned: (String) -> Unit = {},
+    /** The translate box's editor (null in the preview). */
+    private val translateConnection: () -> InputConnection? = { null },
 ) {
     var language by mutableStateOf(Language.SINHALA); private set
     var mode by mutableStateOf(KeyMode.LETTERS); private set
@@ -71,10 +81,30 @@ class KeyboardController(
     /** Password and similar fields: English only, no preview, nothing captured. */
     var restrictedField by mutableStateOf(false); private set
 
+    /**
+     * Media search (GIFs, stickers, memes): while [searchActive], keys type into [searchQuery]
+     * inside the keyboard instead of into the app. Enter publishes the query as [submittedSearch].
+     */
+    var searchActive by mutableStateOf(false); private set
+    var searchQuery by mutableStateOf(""); private set
+    var submittedSearch by mutableStateOf<String?>(null); private set
+
+    /** Translate mode: keys type into the translate box; [translateText] is what it holds. */
+    var translateActive by mutableStateOf(false); private set
+    var translateText by mutableStateOf(""); private set
+
+    /** Waiting to be translated (set by ✓ Translate / enter), or null. */
+    var translateRequest by mutableStateOf<TranslateRequest?>(null); private set
+    private var nextRequestId = 0
+
     /** Active fancy-text style (English letters and digits are typed in it), or null. */
     var fancyStyle by mutableStateOf<FancyText.Style?>(null); private set
 
     private val composing = StringBuilder()
+
+    /** True while voice typing shows words that aren't final yet (as composing text). */
+    private var voiceComposing = false
+    private var voiceNeedsSpace = false
     private var editorInfo: EditorInfo? = null
     private var preferredLanguage = Language.SINHALA
     private var livePreview = true
@@ -115,6 +145,15 @@ class KeyboardController(
     }
 
     fun onStartInput(info: EditorInfo?) {
+        if (translateActive) {
+            translateActive = false
+            translateRequest = null
+            clearTranslateBox()
+        }
+        voiceComposing = false
+        searchActive = false
+        searchQuery = ""
+        submittedSearch = null
         composing.clear()
         candidates = emptyList()
         bestGuess = ""
@@ -157,6 +196,8 @@ class KeyboardController(
 
     /** Called from InputMethodService.onUpdateSelection. Drops the composing word if the cursor moved away. */
     fun onSelectionChanged(newSelStart: Int, newSelEnd: Int, candidatesEnd: Int) {
+        // While translating, the app's field only shows the translation; the word being typed is in the box.
+        if (translateActive) return
         if (composing.isNotEmpty() && (newSelStart != candidatesEnd || newSelEnd != candidatesEnd)) {
             composing.clear()
             candidates = emptyList()
@@ -168,6 +209,12 @@ class KeyboardController(
     // ---------------------------------------------------------------- input
 
     fun onAction(action: KeyAction) {
+        if (searchActive && onSearchAction(action)) return
+        if (translateActive && action == KeyAction.Enter) {
+            submitTranslate()
+            return
+        }
+        endVoiceText()
         val undo = lastAutoCorrection
         lastAutoCorrection = null
         when (action) {
@@ -190,6 +237,7 @@ class KeyboardController(
             KeyAction.ToggleLanguage -> toggleLanguage()
             KeyAction.None -> Unit
         }
+        refreshTranslateText()
     }
 
     fun pickCandidate(text: String) {
@@ -201,16 +249,20 @@ class KeyboardController(
         ic?.commitText(text, 1)
         ic?.commitText(" ", 1)
         learn(text) // an explicit choice — also stops future auto-correction of this spelling
+        refreshTranslateText()
     }
 
     /** Emoji, kaomoji, clipboard items. */
     fun insertText(text: String) {
         lastAutoCorrection = null
+        endVoiceText()
         commitComposing()
         commit(text)
+        refreshTranslateText()
     }
 
     fun moveCursor(direction: Int) {
+        if (translateActive) return // the box always types at its end
         lastAutoCorrection = null
         commitComposing()
         sendKey(if (direction > 0) KeyEvent.KEYCODE_DPAD_RIGHT else KeyEvent.KEYCODE_DPAD_LEFT)
@@ -218,17 +270,202 @@ class KeyboardController(
 
     fun toggleLanguage() {
         if (restrictedField) return
+        endVoiceText()
         commitComposing()
         language = if (language == Language.SINHALA) Language.ENGLISH else Language.SINHALA
         preferredLanguage = language
         shift = ShiftState.OFF
         mode = KeyMode.LETTERS
         updateAutoCaps()
+        refreshTranslateText()
     }
 
     fun togglePanel(target: Panel) {
+        searchActive = false
+        endVoiceText()
         commitComposing()
         panel = if (panel == target) Panel.KEYS else target
+    }
+
+    // ---------------------------------------------------------------- translate
+
+    /**
+     * Opens the translate box. Type in the keyboard's language (Singlish turns into Sinhala as usual);
+     * the translation goes into the app. The language key flips the direction.
+     */
+    fun startTranslate() {
+        if (restrictedField) return
+        translateRequest = null
+        endVoiceText()
+        commitComposing()
+        searchActive = false
+        if (panel != Panel.VOICE) panel = Panel.KEYS
+        clearTranslateBox()
+        translateActive = true
+        mode = KeyMode.LETTERS
+        shift = ShiftState.OFF
+        updateAutoCaps()
+    }
+
+    /** Closes the box (✕). Anything not translated yet is dropped. */
+    fun stopTranslate() {
+        if (!translateActive) return
+        endVoiceText()
+        commitComposing()
+        translateActive = false
+        translateRequest = null
+        clearTranslateBox()
+        updateAutoCaps()
+    }
+
+    /**
+     * ✓ Translate / enter: asks for the box to be translated (one request per tap, like Z Sri).
+     * The direction follows the keyboard language: Sinhala → English, English → Sinhala.
+     */
+    fun submitTranslate() {
+        if (!translateActive || translateRequest != null) return
+        endVoiceText()
+        commitComposing()
+        refreshTranslateText()
+        val text = translateText.trim()
+        if (text.isEmpty()) return
+        translateRequest = TranslateRequest(++nextRequestId, text, language)
+    }
+
+    /**
+     * Called by the service when [request] is done. On success the result is already in the app,
+     * so the box is emptied for the next sentence; on failure the text stays to try again.
+     */
+    fun onTranslated(request: TranslateRequest, success: Boolean) {
+        if (translateRequest?.id != request.id) return
+        translateRequest = null
+        // Only empty the box if nothing new was typed while waiting.
+        if (success && translateActive && translateText.trim() == request.text && composing.isEmpty()) {
+            composing.clear()
+            candidates = emptyList()
+            bestGuess = ""
+            clearTranslateBox()
+            updateAutoCaps()
+        }
+    }
+
+    /** Puts [text] (a translation) into the app at the cursor, with a space before it if needed. */
+    fun insertTranslation(text: String) {
+        val ic = appConnection() ?: return
+        val before = ic.getTextBeforeCursor(1, 0)
+        val needsSpace = !before.isNullOrEmpty() && !before.last().isWhitespace()
+        ic.commitText(if (needsSpace) " $text" else text, 1)
+    }
+
+    /** Empties the translate box (the ✕ in the box). */
+    fun clearTranslateText() {
+        if (!translateActive) return
+        composing.clear()
+        candidates = emptyList()
+        bestGuess = ""
+        clearTranslateBox()
+        updateAutoCaps()
+    }
+
+    private fun clearTranslateBox() {
+        val box = translateConnection() ?: run { translateText = ""; return }
+        box.finishComposingText()
+        val before = box.getTextBeforeCursor(MAX_TRANSLATE * 2, 0)?.length ?: 0
+        if (before > 0) box.deleteSurroundingText(before, 0)
+        translateText = ""
+    }
+
+    private fun refreshTranslateText() {
+        if (!translateActive) return
+        translateText = translateConnection()?.getTextBeforeCursor(MAX_TRANSLATE, 0)?.toString().orEmpty()
+    }
+
+    // ---------------------------------------------------------------- voice
+
+    /**
+     * Shows recognised speech: [final] = false shows it as composing text (still changing),
+     * true commits it. A space is added in front when the text before the cursor needs one.
+     * In translate mode the words go into the translate box and get translated.
+     */
+    fun showVoiceText(text: String, final: Boolean) {
+        val ic = inputConnection() ?: return
+        if (!voiceComposing) {
+            commitComposing()
+            val before = ic.getTextBeforeCursor(1, 0)
+            voiceNeedsSpace = !before.isNullOrEmpty() && !before.last().isWhitespace()
+        }
+        val shown = if (voiceNeedsSpace && text.isNotEmpty()) " $text" else text
+        if (final) {
+            if (shown.isEmpty()) ic.setComposingText("", 1) else ic.commitText(shown, 1)
+            ic.finishComposingText()
+            voiceComposing = false
+        } else {
+            ic.setComposingText(shown, 1)
+            voiceComposing = true
+        }
+        refreshTranslateText()
+    }
+
+    /** Keeps whatever voice text is showing (a key or panel change ends the voice phrase). */
+    fun endVoiceText() {
+        if (!voiceComposing) return
+        inputConnection()?.finishComposingText()
+        voiceComposing = false
+    }
+
+    // ---------------------------------------------------------------- media search
+
+    /** Opens the search box in the media panel; keys now type into it. */
+    fun startSearch() {
+        commitComposing()
+        searchActive = true
+        searchQuery = submittedSearch.orEmpty()
+        mode = KeyMode.LETTERS
+        shift = ShiftState.OFF
+    }
+
+    /** Leaves typing mode. Keeps the last submitted search showing. */
+    fun cancelSearch() {
+        searchActive = false
+        searchQuery = submittedSearch.orEmpty()
+    }
+
+    /** Clears the search (back to Trending). */
+    fun clearSearch() {
+        searchQuery = ""
+        submittedSearch = null
+    }
+
+    /** Replaces the text in the search box (quick-search chips). Results update live. */
+    fun setSearchText(text: String) {
+        searchQuery = text.take(MAX_SEARCH)
+    }
+
+    /** Runs a search directly, e.g. from a category chip. */
+    fun submitSearch(query: String?) {
+        searchActive = false
+        searchQuery = query.orEmpty()
+        submittedSearch = query?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
+    /** Handles a key while the search box has focus. Returns false for keys that work as usual. */
+    private fun onSearchAction(action: KeyAction): Boolean {
+        when (action) {
+            is KeyAction.Text -> {
+                val raw = action.value
+                val text = if (shift != ShiftState.OFF && raw.length == 1 && raw[0].isLetter()) raw.uppercase() else raw
+                if (searchQuery.length < MAX_SEARCH) searchQuery += text
+                if (shift == ShiftState.ONCE) shift = ShiftState.OFF
+            }
+            KeyAction.Space -> if (searchQuery.isNotEmpty() && !searchQuery.endsWith(" ") && searchQuery.length < MAX_SEARCH) {
+                searchQuery += " "
+            }
+            KeyAction.Delete -> searchQuery = searchQuery.dropLast(1)
+            KeyAction.Enter -> submitSearch(searchQuery)
+            KeyAction.ToggleLanguage -> Unit // search is in English letters
+            else -> return false // shift, symbols pages
+        }
+        return true
     }
 
     /** Picks a fancy style (or null to turn it off) and goes back to the keys. */
@@ -238,6 +475,8 @@ class KeyboardController(
     }
 
     fun showKeys() {
+        searchActive = false
+        endVoiceText()
         panel = Panel.KEYS
     }
 
@@ -259,6 +498,7 @@ class KeyboardController(
      * Capitals with no phonetic meaning (E, F, I…) type the lowercase letter, so they show its hint.
      */
     fun sinhalaHint(base: String): String? {
+        if (searchActive) return null
         if (language != Language.SINHALA || mode != KeyMode.LETTERS || base.length != 1) return null
         val key = phoneticKey(base)
         return SinglishScheme.consonants[key]
@@ -273,6 +513,27 @@ class KeyboardController(
     }
 
     // ---------------------------------------------------------------- internals
+
+    /** Where typing goes: the translate box while translating, otherwise the app. */
+    private fun inputConnection(): InputConnection? =
+        if (translateActive) translateConnection() else appConnection()
+
+    /** Key events go to the app, except in the translate box, which is edited directly. */
+    private fun sendKey(keyCode: Int) {
+        if (!translateActive) {
+            sendAppKey(keyCode)
+            return
+        }
+        val box = translateConnection() ?: return
+        when (keyCode) {
+            KeyEvent.KEYCODE_DEL -> {
+                val before = box.getTextBeforeCursor(2, 0)
+                val n = if (before != null && before.length == 2 && Character.isSurrogatePair(before[0], before[1])) 2 else 1
+                if (!before.isNullOrEmpty()) box.deleteSurroundingText(n, 0)
+            }
+            else -> Unit
+        }
+    }
 
     private fun typeText(raw: String) {
         val text = if (shift != ShiftState.OFF && raw.length == 1 && raw[0].isLetter()) raw.uppercase() else raw
@@ -446,6 +707,10 @@ class KeyboardController(
         )) || (inputClass == InputType.TYPE_CLASS_NUMBER && variation == InputType.TYPE_NUMBER_VARIATION_PASSWORD)
 
     private companion object {
+        const val MAX_SEARCH = 50
+
+        /** Longest text the translate box holds (one request). */
+        const val MAX_TRANSLATE = 1000
         /** EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING (API 26), as a literal so it works on every version. */
         const val IME_FLAG_NO_PERSONALIZED_LEARNING = 0x1000000
     }

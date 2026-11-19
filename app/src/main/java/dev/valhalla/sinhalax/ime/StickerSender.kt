@@ -14,7 +14,7 @@ import dev.valhalla.sinhalax.store.KlipyApi
 import java.io.File
 
 /**
- * Sends GIFs, stickers, memes and AI Emoji into the app the user is typing in, using Android's
+ * Sends GIFs, stickers and memes into the app the user is typing in, using Android's
  * rich-content API (the same way Gboard sends GIFs and stickers to WhatsApp, Messenger, Telegram ...).
  */
 object StickerSender {
@@ -34,7 +34,7 @@ object StickerSender {
         media: KlipyApi.Media,
     ): Result {
         if (info == null || connection == null) return Result.FAILED
-        val mime = pickFormat(info, media.kind.sendPreference.filter { it in media.files }) ?: return Result.NOT_SUPPORTED
+        val mime = pickFormat(info, media.sendOrder) ?: return Result.NOT_SUPPORTED
         return try {
             val file = KlipyApi.downloadForSending(context, media.files.getValue(mime), media.cacheKey, KlipyApi.extensionFor(mime))
             commit(context, info, connection, file, mime, media.title)
@@ -43,7 +43,7 @@ object StickerSender {
         }
     }
 
-    /** Sends an already-saved file (e.g. a generated AI Emoji). */
+    /** Sends an already-saved file. */
     fun sendFile(context: Context, info: EditorInfo?, connection: InputConnection?, file: File, mime: String, label: String): Result {
         if (info == null || connection == null) return Result.FAILED
         if (pickFormat(info, listOf(mime)) == null) return Result.NOT_SUPPORTED

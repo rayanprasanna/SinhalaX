@@ -1,12 +1,19 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.util.Properties
 
-// Secrets live in local.properties (never committed). Add:  KLIPY_API_KEY=your_key
+// Secrets live in local.properties (never committed). Add:
+//   KLIPY_API_KEY=your_key
+//   AZURE_TRANSLATOR_KEY=your_microsoft_key      (translate; free 2M chars/month)
+//   AZURE_TRANSLATOR_REGION=your_resource_region (e.g. southeastasia; leave out for "global")
+//   GOOGLE_TRANSLATE_API_KEY=your_google_cloud_key (translate fallback)
 val localProps = Properties().apply {
     val file = rootProject.file("local.properties")
     if (file.exists()) file.inputStream().use { load(it) }
 }
 val klipyApiKey: String = localProps.getProperty("KLIPY_API_KEY") ?: System.getenv("KLIPY_API_KEY") ?: ""
+val azureTranslatorKey: String = localProps.getProperty("AZURE_TRANSLATOR_KEY") ?: System.getenv("AZURE_TRANSLATOR_KEY") ?: ""
+val azureTranslatorRegion: String = localProps.getProperty("AZURE_TRANSLATOR_REGION") ?: System.getenv("AZURE_TRANSLATOR_REGION") ?: ""
+val translateApiKey: String = localProps.getProperty("GOOGLE_TRANSLATE_API_KEY") ?: System.getenv("GOOGLE_TRANSLATE_API_KEY") ?: ""
 
 plugins {
     alias(libs.plugins.android.application)
@@ -22,10 +29,13 @@ android {
         minSdk = 24
         //noinspection EditedTargetSdkVersion
         targetSdk = 37
-        versionCode = 11
-        versionName = "0.4.1"
+        versionCode = 19
+        versionName = "0.6.2"
 
         buildConfigField("String", "KLIPY_API_KEY", "\"$klipyApiKey\"")
+        buildConfigField("String", "GOOGLE_TRANSLATE_API_KEY", "\"$translateApiKey\"")
+        buildConfigField("String", "AZURE_TRANSLATOR_KEY", "\"$azureTranslatorKey\"")
+        buildConfigField("String", "AZURE_TRANSLATOR_REGION", "\"$azureTranslatorRegion\"")
     }
 
     buildTypes {

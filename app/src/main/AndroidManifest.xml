@@ -3,10 +3,21 @@
 
     <!--
         Internet is used for the theme store (backgrounds and key sounds from Audio Hub) and for
-        GIFs, stickers, memes and AI Emoji (KLIPY), only when the user opens those screens or panels.
+        GIFs, stickers and memes (KLIPY), only when the user opens those screens or panels, and for
+        translation: only text typed into the keyboard's translate box goes to the translation service (Microsoft or Google).
         Nothing typed in other apps is ever sent.
     -->
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Voice typing (mic in the keyboard). Speech is recognised by the phone's voice service. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- Android 11+: lets the keyboard find the phone's speech recognition service. -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
 
     <application
         android:name=".SinhalaXApp"
@@ -26,6 +37,15 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Asks for the microphone for voice typing (a keyboard can't show that dialog itself). -->
+        <activity
+            android:name=".ui.VoicePermissionActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.SinhalaX.Transparent" />
 
         <!-- Shares downloaded stickers with the chat app the user is typing in. -->
         <provider

@@ -172,7 +172,7 @@ fun SettingsScreen(app: SinhalaXApp, settings: KeyboardSettings, onOpenLearnedWo
                 InfoCard(
                     Icons.Outlined.VisibilityOff,
                     "Nothing leaves your phone",
-                    "Typing works offline and never sends what you type. Only the Themes store, GIFs, stickers and AI Emoji go online, while you use them.",
+                    "Typing works offline and never sends what you type. Only the Themes store, GIFs, stickers and memes, Translate (the translate box text) and voice typing go online, while you use them.",
                 )
             }
             item {

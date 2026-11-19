@@ -1,10 +1,10 @@
 package dev.valhalla.sinhalax.store
 
 import android.content.Context
-import android.util.Base64
 import dev.valhalla.sinhalax.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
@@ -15,7 +15,7 @@ import java.util.Locale
 import java.util.UUID
 
 /**
- * Minimal client for the KLIPY API (https://docs.klipy.com): GIFs, stickers, memes and AI Emoji.
+ * Minimal client for the KLIPY API (https://docs.klipy.com): GIFs, stickers and memes.
  * Only called when the user opens the media panel in the keyboard or the Studio.
  *
  * KLIPY terms to keep in mind: show KLIPY attribution wherever content is shown, don't cache content
@@ -32,8 +32,17 @@ object KlipyApi {
     enum class Kind(val path: String, val label: String, val sendPreference: List<String>) {
         GIFS("gifs", "GIFs", listOf("image/gif", "image/webp", "image/png")),
         STICKERS("stickers", "Stickers", listOf("image/webp", "image/png", "image/gif")),
-        MEMES("static-memes", "Memes", listOf("image/jpeg", "image/png", "image/webp", "image/gif")),
-        AI_EMOJI("emojis", "AI Emoji", listOf("image/png", "image/webp", "image/gif")),
+        /** Still pictures with captions (KLIPY "static memes"), sent as PNG/JPG. */
+        MEMES("static-memes", "Memes", listOf("image/png", "image/jpeg", "image/webp", "image/gif"));
+
+        /** GIFs and memes are rectangular pictures (wider grid cells); stickers are cut-outs. */
+        val isWide: Boolean get() = this != STICKERS
+
+        /** Only GIFs are cropped to fill their cell; stickers and memes are fitted so no caption is cut off. */
+        val cropToFill: Boolean get() = this == GIFS
+
+        /** Memes are still images; GIFs and stickers get moving previews. */
+        val animates: Boolean get() = this != MEMES
     }
 
     data class Media(
@@ -41,25 +50,38 @@ object KlipyApi {
         val id: String,
         val slug: String,
         val title: String,
-        /** Small image for the grid. */
+        /** Small still image for the grid (used on Android 8 and older, and while loading). */
         val thumbUrl: String,
+        /** Small animated WebP/GIF for the grid, so GIFs, stickers and memes move like in Gboard. */
+        val animatedUrl: String? = null,
         /** Best URL per MIME type, e.g. "image/gif" -> url. */
         val files: Map<String, String>,
         /** Width / height of the grid image, for nicer layouts. */
         val aspect: Float,
     ) {
         val cacheKey: String get() = "klipy_${kind.path}_" + slug.ifBlank { id }.replace(Regex("[^A-Za-z0-9_-]"), "_").take(60)
+
+        /**
+         * Formats to try when sending, best first, limited to what this item has.
+         *
+         * Animated stickers go as GIF first: WhatsApp turns any WebP that comes from a keyboard into
+         * a *still* "Custom sticker" (first frame only), but plays a GIF as a moving GIF, the way
+         * Z Sri and Gboard do. Still stickers keep WebP so their see-through background survives.
+         */
+        val sendOrder: List<String>
+            get() {
+                val base = if (kind == Kind.STICKERS && animatedUrl != null) {
+                    listOf("image/gif") + kind.sendPreference.filter { it != "image/gif" }
+                } else {
+                    kind.sendPreference
+                }
+                return base.filter { it in files }
+            }
     }
 
     data class Page(val items: List<Media>, val page: Int, val hasNext: Boolean)
 
     data class Category(val name: String, val query: String)
-
-    sealed interface EmojiStatus {
-        data object Processing : EmojiStatus
-        data class Done(val bytes: ByteArray, val mimeType: String) : EmojiStatus
-        data object Failed : EmojiStatus
-    }
 
     // ------------------------------------------------------------------ lists
 
@@ -90,41 +112,15 @@ object KlipyApi {
         }
     }
 
-    // ------------------------------------------------------------------ AI Emoji generation
-
-    /** Starts generating an AI Emoji from [prompt] (max 300 characters). Returns the generation id. */
-    suspend fun generateEmoji(prompt: String): String {
-        val json = postJson("/emojis/generate", JSONObject().put("prompt", prompt.take(300)))
-        return json.optJSONObject("data")?.optString("id")?.takeIf { it.isNotBlank() }
-            ?: throw IOException("KLIPY didn't return a generation id")
-    }
-
-    suspend fun emojiStatus(id: String): EmojiStatus {
-        val data = get("/emojis/generated/${encode(id)}").optJSONObject("data") ?: return EmojiStatus.Failed
-        return when (data.optString("status")) {
-            "success" -> {
-                val result = data.optJSONObject("result") ?: return EmojiStatus.Failed
-                val bytes = Base64.decode(result.optString("base64_encoded").substringAfter("base64,"), Base64.DEFAULT)
-                EmojiStatus.Done(bytes, result.optString("mime_type", "image/png").ifBlank { "image/png" })
-            }
-            "failed" -> EmojiStatus.Failed
-            else -> EmojiStatus.Processing
-        }
-    }
-
     // ------------------------------------------------------------------ files
 
     /** Downloads [url] into the app cache for sending. Old files are cleaned up (KLIPY content isn't to be kept). */
     suspend fun downloadForSending(context: Context, url: String, name: String, extension: String): File =
         withContext(Dispatchers.IO) {
             val target = sendFile(context, name, extension)
-            StoreApi.download(url, target, maxBytes = 12L * 1024 * 1024)
+            StoreApi.download(url, target, maxBytes = 25L * 1024 * 1024)
             target
         }
-
-    /** Saves generated bytes (AI Emoji) for sending. */
-    suspend fun saveForSending(context: Context, bytes: ByteArray, name: String, extension: String): File =
-        withContext(Dispatchers.IO) { sendFile(context, name, extension).apply { writeBytes(bytes) } }
 
     private fun sendFile(context: Context, name: String, extension: String): File {
         val dir = File(context.cacheDir, "stickers").apply { mkdirs() }
@@ -135,6 +131,7 @@ object KlipyApi {
     }
 
     fun extensionFor(mime: String): String = when (mime) {
+        "video/mp4" -> "mp4"
         "image/gif" -> "gif"
         "image/webp" -> "webp"
         "image/jpeg" -> "jpg"
@@ -180,11 +177,18 @@ object KlipyApi {
             file.optJSONObject(size)?.optJSONObject(format)?.takeIf { it.optString("url").startsWith("http") }
 
         // Grid image: a small still image decodes fastest; fall back to whatever exists.
-        val thumb = listOf("xs", "sm", "md").firstNotNullOfOrNull { size ->
+        // Memes carry caption text, so they start from "sm" to keep the words readable.
+        val thumbSizes = if (kind == Kind.MEMES) listOf("sm", "md", "xs") else listOf("xs", "sm", "md")
+        val thumb = thumbSizes.firstNotNullOfOrNull { size ->
             listOf("png", "webp", "jpg", "gif").firstNotNullOfOrNull { entry(size, it) }
         } ?: return null
 
         val formats = listOf("gif" to "image/gif", "webp" to "image/webp", "png" to "image/png", "jpg" to "image/jpeg")
+        // Animated preview: small first (grids show many at once), WebP is lighter than GIF.
+        val animated = if (!kind.animates) null else listOf("sm", "xs", "md").firstNotNullOfOrNull { size ->
+            entry(size, "webp") ?: entry(size, "gif")
+        }?.optString("url")
+
         val files = LinkedHashMap<String, String>()
         for (size in listOf("md", "sm", "hd", "xs")) {
             for ((format, mime) in formats) {
@@ -201,6 +205,7 @@ object KlipyApi {
             slug = o.optString("slug"),
             title = o.optString("title"),
             thumbUrl = thumb.optString("url"),
+            animatedUrl = animated,
             files = files,
             aspect = (w.toFloat() / h).coerceIn(0.5f, 2.5f),
         )
@@ -257,4 +262,54 @@ object KlipyApi {
     }
 
     private fun encode(v: String): String = URLEncoder.encode(v, "UTF-8").replace("+", "%20")
+
+    // ------------------------------------------------------------------ recently sent
+
+    /**
+     * GIFs, stickers and memes the user sent recently (newest first), for the "Recent" chip.
+     * Only KLIPY's links and titles are kept, never the files themselves.
+     */
+    object Recents {
+        private const val MAX = 30
+        private const val PREFS = "klipy_recents"
+
+        fun all(context: Context): List<Media> = runCatching {
+            val raw = prefs(context).getString("items", null) ?: return emptyList()
+            val array = JSONArray(raw)
+            (0 until array.length()).mapNotNull { i -> array.optJSONObject(i)?.let(::fromJson) }
+        }.getOrDefault(emptyList())
+
+        fun of(context: Context, kind: Kind): List<Media> = all(context).filter { it.kind == kind }
+
+        fun add(context: Context, media: Media) {
+            val list = (listOf(media) + all(context).filterNot { it.kind == media.kind && it.cacheKey == media.cacheKey }).take(MAX)
+            val array = JSONArray()
+            list.forEach { array.put(toJson(it)) }
+            prefs(context).edit().putString("items", array.toString()).apply()
+        }
+
+        private fun prefs(context: Context) = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+        private fun toJson(m: Media) = JSONObject()
+            .put("kind", m.kind.name).put("id", m.id).put("slug", m.slug).put("title", m.title)
+            .put("thumb", m.thumbUrl).put("anim", m.animatedUrl ?: "").put("aspect", m.aspect.toDouble())
+            .put("files", JSONObject().apply { m.files.forEach { (k, v) -> put(k, v) } })
+
+        private fun fromJson(o: JSONObject): Media? {
+            val kind = runCatching { Kind.valueOf(o.getString("kind")) }.getOrNull() ?: return null
+            val filesJson = o.optJSONObject("files") ?: return null
+            val files = LinkedHashMap<String, String>()
+            filesJson.keys().forEach { k -> files[k] = filesJson.getString(k) }
+            return Media(
+                kind = kind,
+                id = o.optString("id"),
+                slug = o.optString("slug"),
+                title = o.optString("title"),
+                thumbUrl = o.optString("thumb"),
+                animatedUrl = o.optString("anim").takeIf { it.startsWith("http") },
+                files = files,
+                aspect = o.optDouble("aspect", 1.0).toFloat(),
+            )
+        }
+    }
 }

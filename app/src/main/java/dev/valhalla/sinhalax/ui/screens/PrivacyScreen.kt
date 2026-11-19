@@ -10,6 +10,8 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material3.Icon
@@ -37,18 +39,37 @@ fun PrivacyScreen(onBack: () -> Unit) {
                 Icons.Outlined.CloudOff,
                 "Your typing never goes online",
                 "Typing, suggestions and fancy text all work offline. The app goes online only for the Themes store " +
-                    "(backgrounds and sounds you pick) and for GIFs, stickers, memes and AI Emoji, while you have them open. " +
-                    "Nothing you type in other apps is ever sent.",
+                    "(backgrounds and sounds you pick), for GIFs, stickers and memes while you have them open, and " +
+                    "for Translate and voice typing while you use them. Nothing else you type in other apps is ever sent.",
             )
         }
         item {
             InfoCard(
                 Icons.Outlined.Public,
-                "GIFs, stickers and AI Emoji by KLIPY",
+                "GIFs, stickers and memes by KLIPY",
                 "When you open them, SinhalaX asks KLIPY for lists and sends a random ID made for this install " +
-                    "(not your name, number or phone ID). Search words you type in the Studio, and descriptions you give " +
-                    "for AI Emoji, are sent to KLIPY. When you send one, KLIPY is told which item was shared. " +
-                    "KLIPY's own privacy policy applies.",
+                    "(not your name, number or phone ID). Words you type into the \"Search KLIPY\" box — in the " +
+                    "keyboard or the Studio — are sent to KLIPY as you type, to find results. Nothing typed into " +
+                    "chats or other apps is. When you send one, KLIPY is told which item was shared. " +
+                    "Recently sent items are listed on this phone only. KLIPY's own privacy policy applies.",
+            )
+        }
+        item {
+            InfoCard(
+                Icons.Outlined.Translate,
+                "Translate",
+                "Only what you type into the keyboard's translate box is sent to the translation service (Microsoft Translator or Google Cloud Translation), while " +
+                    "the box is open, to get the translation. Text typed into apps the normal way is not. " +
+                    "That service's privacy policy applies to that text.",
+            )
+        }
+        item {
+            InfoCard(
+                Icons.Outlined.Mic,
+                "Voice typing",
+                "The mic uses your phone's own speech service (usually Google's) only while the voice panel is " +
+                    "listening. SinhalaX doesn't record or keep audio; it receives the words and types them. " +
+                    "The microphone permission is asked for the first time you tap the mic.",
             )
         }
         item {

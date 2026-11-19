@@ -12,6 +12,7 @@ import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.core.graphics.toColorInt
 import android.media.AudioManager
 import android.view.HapticFeedbackConstants
 import android.view.View
@@ -39,6 +40,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -56,8 +58,8 @@ import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.EmojiEmotions
-import androidx.compose.material.icons.outlined.KeyboardHide
-import androidx.compose.material.icons.outlined.Language
+import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Icon
@@ -109,13 +111,16 @@ fun SinhalaXKeyboard(
     modifier: Modifier = Modifier,
     applySystemInsets: Boolean = true,
     onOpenApp: () -> Unit = {},
-    onHide: () -> Unit = {},
     onDeleteClip: (String) -> Unit = {},
     onClearClips: () -> Unit = {},
     /** Whether the current text box accepts images (stickers). */
     canSendSticker: Boolean = false,
     /** Sends a sticker into the current app; null in the in-app preview. */
     onSendSticker: (suspend (KlipyApi.Media, String?) -> StickerOutcome)? = null,
+    /** Voice typing; null in the in-app preview. */
+    voice: VoiceInput? = null,
+    /** Translation status for the translate bar; null in the in-app preview. */
+    translation: TranslateState? = null,
 ) {
     val backgroundImage = rememberBackgroundImage(settings.backgroundPath)
     val baseTheme = KeyboardThemes.byId(settings.themeId)
@@ -131,6 +136,7 @@ fun SinhalaXKeyboard(
     val feedback = rememberKeyFeedback(settings.vibrate, settings.sound, keySound, settings.soundVolume)
     val configuration = LocalConfiguration.current
     val landscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val screenHeight = screenHeightDp()
     // Landscape: no number row (digits stay on long-press of q–p) and a slimmer top strip,
     // and the whole keyboard is fitted into about half the screen height, so the app above
     // (e.g. WhatsApp's chat and message box) stays usable.
@@ -138,13 +144,13 @@ fun SinhalaXKeyboard(
     val rows = if (numberRow) 5 else 4
     val stripHeight = if (landscape) 38.dp else 46.dp
     val rowHeight = if (landscape) {
-        val budget = configuration.screenHeightDp * 0.5f - stripHeight.value - 8f - settings.bottomPaddingDp
+        val budget = screenHeight * 0.5f - stripHeight.value - 8f - settings.bottomPaddingDp
         (budget / rows).coerceIn(30f, 42f * settings.heightScale).dp
     } else {
         (50f * settings.heightScale).dp
     }
     val panelHeight = rowHeight * rows + 8.dp
-    val layoutSettings = if (numberRow == settings.numberRow) settings else settings.copy(numberRow = numberRow)
+    val layoutSettings = if (landscape && settings.numberRow) settings.copy(numberRow = false) else settings
     val background: Brush = if (theme.background.size > 1) {
         Brush.verticalGradient(theme.background)
     } else {
@@ -159,15 +165,32 @@ fun SinhalaXKeyboard(
             .then(if (applySystemInsets) Modifier.navigationBarsPadding() else Modifier)
             .padding(bottom = settings.bottomPaddingDp.dp),
     ) {
-        TopStrip(controller, theme, feedback, onOpenApp, onHide, stripHeight)
+        if (controller.searchActive) {
+            // Searching GIFs / stickers / memes: search box, quick chips and live results above
+            // the normal letter keys (like Gboard). Letters go into the search box, never the chat.
+            MediaSearchPanel(
+                controller, theme, feedback,
+                barHeight = stripHeight,
+                resultsHeight = if (landscape) 84.dp else 132.dp,
+                onSend = onSendSticker,
+            )
+            KeysPanel(controller, theme, layoutSettings, feedback, rowHeight)
+            return@Column
+        }
+        if (controller.translateActive) {
+            // Translating: the box sits above the suggestions; letters type into it, and
+            // ✓ Translate puts the translation into the app's text field.
+            TranslateBar(controller, theme, feedback, stripHeight, translation)
+        }
+        TopStrip(controller, theme, feedback, onOpenApp, stripHeight, translation)
         when (controller.panel) {
             Panel.KEYS -> KeysPanel(controller, theme, layoutSettings, feedback, rowHeight)
-            Panel.EMOJI -> EmojiPanel(controller, theme, feedback, panelHeight)
+            Panel.VOICE -> VoicePanel(controller, theme, feedback, panelHeight, voice)
+            Panel.EMOJI -> EmojiHub(controller, theme, feedback, panelHeight, canSendSticker, onSendSticker)
             Panel.CLIPBOARD -> ClipboardPanel(
                 controller, theme, feedback, clipItems, panelHeight, onDeleteClip, onClearClips,
             )
             Panel.FANCY -> FancyPanel(controller, theme, feedback, panelHeight)
-            Panel.STICKERS -> MediaPanel(theme, feedback, panelHeight, canSendSticker, onSendSticker)
         }
     }
 }
@@ -180,8 +203,8 @@ fun KeyboardPreview(settings: KeyboardSettings, modifier: Modifier = Modifier) {
         app?.prediction?.ensureLoaded()
         KeyboardController(
             SinglishTransliterator(),
-            inputConnection = { null },
-            sendKey = {},
+            appConnection = { null },
+            sendAppKey = {},
             predictor = { app?.prediction?.predictor?.value },
         )
     }
@@ -189,7 +212,7 @@ fun KeyboardPreview(settings: KeyboardSettings, modifier: Modifier = Modifier) {
 
     var expanded by rememberSaveable { mutableStateOf(true) }
     // Never more than ~45% of the screen; the rest scrolls inside, so the list above stays usable.
-    val maxHeight = (LocalConfiguration.current.screenHeightDp * 0.45f).dp
+    val maxHeight = (screenHeightDp() * 0.45f).dp
 
     Column(modifier.fillMaxWidth()) {
         Row(
@@ -272,7 +295,21 @@ private fun rememberKeyFeedback(
 }
 
 private fun parseHex(hex: String, fallback: Color): Color =
-    if (hex.isBlank()) fallback else runCatching { Color(android.graphics.Color.parseColor(hex)) }.getOrDefault(fallback)
+    if (hex.isBlank()) fallback else runCatching { Color(hex.toColorInt()) }.getOrDefault(fallback)
+
+/**
+ * Screen height in dp, from the display. (Not LocalWindowInfo.containerSize: in a keyboard that is
+ * the keyboard's own window, which would make the size depend on itself.) Updates on rotation.
+ */
+@Composable
+private fun screenHeightDp(): Float {
+    val configuration = LocalConfiguration.current
+    val resources = LocalContext.current.resources
+    return remember(configuration) {
+        val metrics = resources.displayMetrics
+        metrics.heightPixels / metrics.density
+    }
+}
 
 /** Draws [image] to fill the area, cropping the overflow evenly (like ContentScale.Crop). */
 private fun DrawScope.drawCentreCrop(image: ImageBitmap) {
@@ -296,8 +333,8 @@ private fun TopStrip(
     theme: KeyboardTheme,
     feedback: KeyFeedback,
     onOpenApp: () -> Unit,
-    onHide: () -> Unit,
     height: Dp = 46.dp,
+    translation: TranslateState? = null,
 ) {
     Row(
         Modifier
@@ -338,54 +375,88 @@ private fun TopStrip(
                     )
                 }
             }
+        } else if (controller.translateActive) {
+            TranslateStatus(controller, theme, translation)
         } else {
-            LanguageChip(controller, theme) {
+            // SinhalaX wordmark (opens the app), then the tools spread evenly across the rest.
+            Wordmark(theme) {
                 feedback.press()
-                controller.toggleLanguage()
+                onOpenApp()
             }
-            Spacer(Modifier.weight(1f))
-            ToolbarText(
-                "Aa",
-                description = "Fancy text",
+            val toolModifier = Modifier.weight(1f)
+            ToolbarIcon(
+                LanguageIcons.forLanguage(controller.language),
+                if (controller.language == Language.SINHALA) "Sinhala, switch to English" else "English, switch to Sinhala",
+                theme,
+                active = false,
+                modifier = toolModifier,
+            ) {
+                if (!controller.restrictedField) {
+                    feedback.press()
+                    controller.toggleLanguage()
+                }
+            }
+            FancyTextButton(
                 theme = theme,
                 active = controller.panel == Panel.FANCY || controller.fancyStyle != null,
+                modifier = toolModifier,
             ) {
                 feedback.press()
                 controller.togglePanel(Panel.FANCY)
             }
-            ToolbarIcon(StickerIcon, "GIFs and stickers", theme, controller.panel == Panel.STICKERS) {
+            val hubOpen = controller.panel == Panel.EMOJI
+            ToolbarIcon(Icons.Outlined.EmojiEmotions, "Emoji", theme, hubOpen && !klipyTabShowing, toolModifier) {
                 feedback.press()
-                controller.togglePanel(Panel.STICKERS)
+                openEmojiHub(controller, gifs = false)
             }
-            ToolbarIcon(Icons.Outlined.EmojiEmotions, "Emoji", theme, controller.panel == Panel.EMOJI) {
+            ToolbarIcon(GifIcon, "GIFs, stickers and memes (KLIPY)", theme, hubOpen && klipyTabShowing, toolModifier) {
                 feedback.press()
-                controller.togglePanel(Panel.EMOJI)
+                openEmojiHub(controller, gifs = true)
             }
-            ToolbarIcon(Icons.Outlined.ContentPaste, "Clipboard", theme, controller.panel == Panel.CLIPBOARD) {
+            ToolbarIcon(Icons.Outlined.ContentPaste, "Clipboard", theme, controller.panel == Panel.CLIPBOARD, toolModifier) {
                 feedback.press()
                 controller.togglePanel(Panel.CLIPBOARD)
             }
-            ToolbarIcon(Icons.Outlined.Settings, "Settings", theme, false, onOpenApp)
-            ToolbarIcon(Icons.Outlined.KeyboardHide, "Hide keyboard", theme, false, onHide)
+            ToolbarIcon(Icons.Outlined.Translate, "Translate", theme, controller.translateActive, toolModifier) {
+                feedback.press()
+                if (controller.translateActive) controller.stopTranslate() else controller.startTranslate()
+            }
+            ToolbarIcon(Icons.Outlined.Mic, "Voice typing", theme, controller.panel == Panel.VOICE, toolModifier) {
+                feedback.press()
+                controller.togglePanel(Panel.VOICE)
+            }
+            ToolbarIcon(Icons.Outlined.Settings, "Settings", theme, false, toolModifier, onOpenApp)
         }
     }
 }
 
+/**
+ * Opens the emoji panel on the emoji side (😊) or the KLIPY side (GIF). Tapping the button that is
+ * already showing closes the panel; tapping the other one just switches tab.
+ */
+private fun openEmojiHub(controller: KeyboardController, gifs: Boolean) {
+    val open = controller.panel == Panel.EMOJI
+    if (open && klipyTabShowing == gifs) {
+        controller.togglePanel(Panel.EMOJI) // close
+        return
+    }
+    lastTab = emojiHubTabFor(gifs)
+    if (!open) controller.togglePanel(Panel.EMOJI)
+}
+
+/** "SinhalaX" at the top left, like a brand chip: tap to open the app. */
 @Composable
-private fun LanguageChip(controller: KeyboardController, theme: KeyboardTheme, onClick: () -> Unit) {
-    val sinhala = controller.language == Language.SINHALA
-    val dim = theme.toolbarText.copy(alpha = 0.45f)
+private fun Wordmark(theme: KeyboardTheme, onClick: () -> Unit) {
     Row(
         Modifier
-            .clip(CircleShape)
-            .background(theme.accent.copy(alpha = 0.14f))
-            .clickable(enabled = !controller.restrictedField, onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 6.dp),
+            .fillMaxHeight()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClickLabel = "Open SinhalaX", onClick = onClick)
+            .padding(start = 4.dp, end = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("සිං", color = if (sinhala) theme.accent else dim, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        Text("  ·  ", color = dim, fontSize = 14.sp)
-        Text("En", color = if (!sinhala) theme.accent else dim, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Text("Sinhala", color = theme.toolbarText, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        Text("X", color = theme.accent, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
     }
 }
 
@@ -395,48 +466,57 @@ private fun ToolbarIcon(
     description: String,
     theme: KeyboardTheme,
     active: Boolean,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
-    Box(
-        Modifier
-            .size(40.dp)
-            .clip(CircleShape)
-            .background(if (active) theme.accent.copy(alpha = 0.2f) else Color.Transparent)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            icon,
-            contentDescription = description,
-            tint = if (active) theme.accent else theme.toolbarText,
-            modifier = Modifier.size(22.dp),
-        )
+    Box(modifier.fillMaxHeight(), contentAlignment = Alignment.Center) {
+        Box(
+            Modifier
+                .widthIn(max = 38.dp)
+                .fillMaxWidth()
+                .height(36.dp)
+                .clip(RoundedCornerShape(50))
+                .background(if (active) theme.accent.copy(alpha = 0.2f) else Color.Transparent)
+                .clickable(onClickLabel = description, onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                icon,
+                contentDescription = description,
+                tint = if (active) theme.accent else theme.toolbarText,
+                modifier = Modifier.size(22.dp),
+            )
+        }
     }
 }
 
+/** The "Aa" fancy-text button in the toolbar. */
 @Composable
-private fun ToolbarText(
-    text: String,
-    description: String,
+private fun FancyTextButton(
     theme: KeyboardTheme,
     active: Boolean,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
-    Box(
-        Modifier
-            .size(40.dp)
-            .clip(CircleShape)
-            .background(if (active) theme.accent.copy(alpha = 0.2f) else Color.Transparent)
-            .clickable(onClickLabel = description, onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text,
-            color = if (active) theme.accent else theme.toolbarText,
-            fontSize = 17.sp,
-            fontWeight = FontWeight.Bold,
-            fontFamily = FontFamily.Serif,
-        )
+    Box(modifier.fillMaxHeight(), contentAlignment = Alignment.Center) {
+        Box(
+            Modifier
+                .widthIn(max = 38.dp)
+                .fillMaxWidth()
+                .height(36.dp)
+                .clip(RoundedCornerShape(50))
+                .background(if (active) theme.accent.copy(alpha = 0.2f) else Color.Transparent)
+                .clickable(onClickLabel = "Fancy text", onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                "Aa",
+                color = if (active) theme.accent else theme.toolbarText,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Serif,
+            )
+        }
     }
 }
 
@@ -661,7 +741,13 @@ private fun KeyContent(
             Icons.AutoMirrored.Outlined.Backspace, "Delete", tint = color, modifier = Modifier.size(22.dp),
         )
         KeyAction.Enter -> Icon(
-            imageVector = when (controller.enterAction) {
+            imageVector = when (
+                when {
+                    controller.searchActive -> EnterAction.SEARCH
+                    controller.translateActive -> EnterAction.DONE // ✓ keeps the translation
+                    else -> controller.enterAction
+                }
+            ) {
                 EnterAction.SEARCH -> Icons.Outlined.Search
                 EnterAction.SEND -> Icons.AutoMirrored.Outlined.Send
                 EnterAction.GO, EnterAction.NEXT -> Icons.AutoMirrored.Outlined.ArrowForward
@@ -674,9 +760,10 @@ private fun KeyContent(
             modifier = Modifier.size(22.dp),
         )
         KeyAction.ToggleLanguage -> Icon(
-            Icons.Outlined.Language, "Switch language",
+            LanguageIcons.forLanguage(controller.language),
+            if (controller.language == Language.SINHALA) "Sinhala, switch to English" else "English, switch to Sinhala",
             tint = if (controller.restrictedField) color.copy(alpha = 0.3f) else color,
-            modifier = Modifier.size(20.dp),
+            modifier = Modifier.size(22.dp),
         )
         KeyAction.Space -> Text(
             text = if (controller.language == Language.SINHALA) "SinhalaX · සිංහල" else "SinhalaX · English",
@@ -694,123 +781,72 @@ private fun KeyContent(
                 null
             }
             BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            // Short keys (landscape, small height setting): smaller text, hint tucked in the corner.
-            val compact = maxHeight < 46.dp
-            val letterSp = (if (label.length == 1) (if (compact) 16 else 21) else (if (compact) 12 else 15)) * font
-            if (hint == null) {
-                Text(
-                    text = label,
-                    color = color,
-                    fontSize = letterSp.sp,
-                    lineHeight = (letterSp + 2).sp,
-                    maxLines = 1,
-                )
-            } else if (compact) {
-                Box(Modifier.fillMaxSize()) {
-                    Text(
-                        text = hint,
-                        color = theme.hint,
-                        fontSize = (8 * font).sp,
-                        lineHeight = (9 * font).sp,
-                        maxLines = 1,
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(top = 1.dp, end = 3.dp),
-                    )
+                // Short keys (landscape, small height setting): smaller text, hint tucked in the corner.
+                val compact = maxHeight < 46.dp
+                val letterSp = (if (label.length == 1) (if (compact) 16 else 21) else (if (compact) 12 else 15)) * font
+                if (hint == null) {
                     Text(
                         text = label,
                         color = color,
                         fontSize = letterSp.sp,
-                        lineHeight = (letterSp + 1).sp,
+                        lineHeight = (letterSp + 2).sp,
                         maxLines = 1,
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .padding(top = 3.dp),
                     )
-                }
-            } else {
-                // Hint gets its own row at the top; the letter is centred in the space below.
-                Column(
-                    Modifier
-                        .fillMaxSize()
-                        .padding(start = 2.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
-                ) {
-                    Text(
-                        text = hint,
-                        color = theme.hint,
-                        fontSize = (10 * font).sp,
-                        lineHeight = (12 * font).sp,
-                        maxLines = 1,
-                        modifier = Modifier.align(Alignment.End),
-                    )
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .weight(1f),
-                        contentAlignment = Alignment.Center,
-                    ) {
+                } else if (compact) {
+                    Box(Modifier.fillMaxSize()) {
+                        Text(
+                            text = hint,
+                            color = theme.hint,
+                            fontSize = (8 * font).sp,
+                            lineHeight = (9 * font).sp,
+                            maxLines = 1,
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(top = 1.dp, end = 3.dp),
+                        )
                         Text(
                             text = label,
                             color = color,
-                            fontSize = ((if (label.length == 1) 19 else 14) * font).sp,
-                            lineHeight = ((if (label.length == 1) 21 else 16) * font).sp,
+                            fontSize = letterSp.sp,
+                            lineHeight = (letterSp + 1).sp,
                             maxLines = 1,
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .padding(top = 3.dp),
                         )
+                    }
+                } else {
+                    // Hint gets its own row at the top; the letter is centred in the space below.
+                    Column(
+                        Modifier
+                            .fillMaxSize()
+                            .padding(start = 2.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+                    ) {
+                        Text(
+                            text = hint,
+                            color = theme.hint,
+                            fontSize = (10 * font).sp,
+                            lineHeight = (12 * font).sp,
+                            maxLines = 1,
+                            modifier = Modifier.align(Alignment.End),
+                        )
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = label,
+                                color = color,
+                                fontSize = ((if (label.length == 1) 19 else 14) * font).sp,
+                                lineHeight = ((if (label.length == 1) 21 else 16) * font).sp,
+                                maxLines = 1,
+                            )
+                        }
                     }
                 }
             }
-            }
-        }
-    }
-}
-
-// ------------------------------------------------------------------ emoji
-
-@Composable
-private fun EmojiPanel(
-    controller: KeyboardController,
-    theme: KeyboardTheme,
-    feedback: KeyFeedback,
-    height: Dp,
-) {
-    var tab by remember { mutableIntStateOf(0) }
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .height(height),
-    ) {
-        if (tab == 0) {
-            LazyVerticalGrid(columns = GridCells.Adaptive(46.dp), modifier = Modifier.weight(1f)) {
-                items(EmojiData.emojis) { emoji ->
-                    Box(
-                        Modifier
-                            .height(46.dp)
-                            .clickable {
-                                feedback.press()
-                                controller.insertText(emoji)
-                            },
-                        contentAlignment = Alignment.Center,
-                    ) { Text(emoji, fontSize = 26.sp) }
-                }
-            }
-        } else {
-            LazyVerticalGrid(columns = GridCells.Adaptive(118.dp), modifier = Modifier.weight(1f)) {
-                items(EmojiData.kaomoji) { face ->
-                    Box(
-                        Modifier
-                            .height(46.dp)
-                            .clickable {
-                                feedback.press()
-                                controller.insertText(face)
-                            },
-                        contentAlignment = Alignment.Center,
-                    ) { Text(face, color = theme.text, fontSize = 14.sp, maxLines = 1) }
-                }
-            }
-        }
-        PanelBottomBar(controller, theme, feedback) {
-            PanelTab("😊", tab == 0, theme) { tab = 0 }
-            PanelTab("(◕‿◕)", tab == 1, theme) { tab = 1 }
         }
     }
 }
@@ -886,7 +922,7 @@ private fun ClipboardPanel(
             }
         }
         PanelBottomBar(controller, theme, feedback) {
-            if (clips.isNotEmpty()) PanelTab("Clear all", false, theme, onClear)
+            if (clips.isNotEmpty()) PanelTab("Clear all", theme, onClear)
         }
     }
 }
@@ -908,7 +944,7 @@ private fun PanelBottomBar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        PanelTab("ABC", false, theme) {
+        PanelTab("ABC", theme) {
             feedback.press()
             controller.showKeys()
         }
@@ -932,19 +968,19 @@ private fun PanelBottomBar(
 }
 
 @Composable
-private fun PanelTab(label: String, selected: Boolean, theme: KeyboardTheme, onClick: () -> Unit) {
+private fun PanelTab(label: String, theme: KeyboardTheme, onClick: () -> Unit) {
     Box(
         Modifier
             .height(40.dp)
             .clip(RoundedCornerShape(10.dp))
-            .background(if (selected) theme.accent.copy(alpha = 0.2f) else theme.specialKey)
+            .background(theme.specialKey)
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             label,
-            color = if (selected) theme.accent else theme.text,
+            color = theme.text,
             fontSize = 15.sp,
             fontWeight = FontWeight.Medium,
         )
