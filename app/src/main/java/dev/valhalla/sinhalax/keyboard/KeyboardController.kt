@@ -16,7 +16,15 @@ import dev.valhalla.sinhalax.prediction.Predictor
 enum class Language { SINHALA, ENGLISH }
 enum class KeyMode { LETTERS, SYMBOLS, SYMBOLS2 }
 enum class ShiftState { OFF, ONCE, LOCKED }
-enum class Panel { KEYS, EMOJI, CLIPBOARD, FANCY, VOICE }
+enum class Panel {
+    KEYS, EMOJI, CLIPBOARD, FANCY, VOICE,
+    // Tools hub (v0.7) and the tools that open in place of the keys
+    TOOLS, TEXT_EDIT, NUMPAD, CALCULATOR, REPEAT,
+    // Phase 2 (v0.8)
+    SECRET, PHRASES,
+    // Phase 3 (v0.9)
+    EMOJI_STYLE,
+}
 
 /** One tap of ✓ Translate: what to translate and from which language. */
 data class TranslateRequest(val id: Int, val text: String, val from: Language)
@@ -70,6 +78,8 @@ class KeyboardController(
     private val onWordLearned: (String) -> Unit = {},
     /** The translate box's editor (null in the preview). */
     private val translateConnection: () -> InputConnection? = { null },
+    /** Shortcuts (text expansion): lower-case key → text. */
+    private val shortcuts: () -> Map<String, String> = { emptyMap() },
 ) {
     var language by mutableStateOf(Language.SINHALA); private set
     var mode by mutableStateOf(KeyMode.LETTERS); private set
@@ -104,6 +114,14 @@ class KeyboardController(
 
     /** True while voice typing shows words that aren't final yet (as composing text). */
     private var voiceComposing = false
+
+    /**
+     * Undo: what SinhalaX put in, newest last, in word-sized pieces ("මම ", "hello, ", a pasted
+     * text, an emoji…). Undo removes the newest piece if it is still right before the cursor.
+     */
+    private val undoLog = ArrayDeque<String>()
+    private val redoLog = ArrayDeque<String>()
+    private var redoing = false
     private var voiceNeedsSpace = false
     private var editorInfo: EditorInfo? = null
     private var preferredLanguage = Language.SINHALA
@@ -112,6 +130,10 @@ class KeyboardController(
     private var wordSuggestions = true
     private var autoCorrect = true
     private var learnWords = true
+    private var shortcutsEnabled = true
+
+    /** Incognito: nothing is learned or remembered while on (also hides clipboard / recents saving). */
+    var incognito by mutableStateOf(false); private set
     private var settingsApplied = false
 
     /** What space will commit for the current word (may be an auto-correction). */
@@ -135,6 +157,8 @@ class KeyboardController(
         wordSuggestions = settings.wordSuggestions
         autoCorrect = settings.autoCorrect
         learnWords = settings.learnWords
+        shortcutsEnabled = settings.shortcutsEnabled
+        incognito = settings.incognito
         if (!settingsApplied) {
             settingsApplied = true
             preferredLanguage = if (settings.startInSinhala) Language.SINHALA else Language.ENGLISH
@@ -151,6 +175,7 @@ class KeyboardController(
             clearTranslateBox()
         }
         voiceComposing = false
+        clearUndo()
         searchActive = false
         searchQuery = ""
         submittedSearch = null
@@ -183,7 +208,9 @@ class KeyboardController(
         updateAutoCaps()
     }
 
+    /** The keyboard is being shown again: start on the letters (see SinhalaXImeService.onStartInputView). */
     fun onStartInputView() {
+        if (searchActive) cancelSearch()
         panel = Panel.KEYS
     }
 
@@ -226,8 +253,10 @@ class KeyboardController(
             }
             KeyAction.Delete -> if (undo == null || !undoAutoCorrection(undo)) delete()
             KeyAction.Space -> {
-                commitWord(applyCorrection = true)
-                commit(" ")
+                if (!expandShortcut()) {
+                    commitWord(applyCorrection = true)
+                    commit(" ")
+                }
                 updateAutoCaps()
             }
             KeyAction.Enter -> enter()
@@ -248,6 +277,8 @@ class KeyboardController(
         bestGuess = ""
         ic?.commitText(text, 1)
         ic?.commitText(" ", 1)
+        recordInsert(text)
+        recordInsert(" ")
         learn(text) // an explicit choice — also stops future auto-correction of this spelling
         refreshTranslateText()
     }
@@ -301,6 +332,7 @@ class KeyboardController(
         searchActive = false
         if (panel != Panel.VOICE) panel = Panel.KEYS
         clearTranslateBox()
+        clearUndo()
         translateActive = true
         mode = KeyMode.LETTERS
         shift = ShiftState.OFF
@@ -315,6 +347,7 @@ class KeyboardController(
         translateActive = false
         translateRequest = null
         clearTranslateBox()
+        clearUndo()
         updateAutoCaps()
     }
 
@@ -354,7 +387,9 @@ class KeyboardController(
         val ic = appConnection() ?: return
         val before = ic.getTextBeforeCursor(1, 0)
         val needsSpace = !before.isNullOrEmpty() && !before.last().isWhitespace()
-        ic.commitText(if (needsSpace) " $text" else text, 1)
+        val shown = if (needsSpace) " $text" else text
+        ic.commitText(shown, 1)
+        if (!translateActive) recordInsert(shown)
     }
 
     /** Empties the translate box (the ✕ in the box). */
@@ -398,6 +433,7 @@ class KeyboardController(
         if (final) {
             if (shown.isEmpty()) ic.setComposingText("", 1) else ic.commitText(shown, 1)
             ic.finishComposingText()
+            recordInsert(shown)
             voiceComposing = false
         } else {
             ic.setComposingText(shown, 1)
@@ -478,6 +514,80 @@ class KeyboardController(
         searchActive = false
         endVoiceText()
         panel = Panel.KEYS
+    }
+
+    // ---------------------------------------------------------------- tools
+
+    /** Opens a tool panel (or the Tools hub) in place of the keys. */
+    fun openPanel(target: Panel) {
+        searchActive = false
+        endVoiceText()
+        commitComposing()
+        panel = target
+    }
+
+    /**
+     * For tools that edit the app's text (Text edit, Repeat): ends the current word first and
+     * returns the app's editor (the translate box while translating).
+     */
+    fun toolConnection(): InputConnection? {
+        endVoiceText()
+        commitComposing()
+        lastAutoCorrection = null
+        return inputConnection()
+    }
+
+    /** Number pad and calculator: puts text in exactly as given (no fancy style, no Singlish). */
+    fun insertRaw(text: String) {
+        lastAutoCorrection = null
+        endVoiceText()
+        commitComposing()
+        commit(text)
+        refreshTranslateText()
+    }
+
+    /** Your shortcuts (code → text), for Phrase studio's "Mine". */
+    fun shortcutList(): List<Pair<String, String>> = shortcuts().toList()
+
+    private fun shortcutFor(typed: String): String? {
+        if (!shortcutsEnabled || restrictedField || typed.isEmpty() || typed.length > MAX_SHORTCUT_KEY) return null
+        return shortcuts()[typed.lowercase()]
+    }
+
+    /**
+     * Space after a shortcut key ("gm") puts its text in instead, plus a space. Works in Sinhala
+     * mode (the English letters you typed) and English mode (the word before the cursor).
+     * Backspace straight after puts the key back, like undoing an auto-correction.
+     */
+    private fun expandShortcut(): Boolean {
+        if (!shortcutsEnabled || restrictedField) return false
+        val ic = inputConnection() ?: return false
+        val typed = if (composing.isNotEmpty()) {
+            composing.toString()
+        } else {
+            val before = ic.getTextBeforeCursor(MAX_SHORTCUT_KEY + 1, 0)?.toString() ?: return false
+            before.takeLastWhile { it.isLetterOrDigit() && it.code < 128 }
+        }
+        val text = shortcutFor(typed) ?: return false
+        if (composing.isNotEmpty()) {
+            ic.commitText(text, 1) // replaces the composing word
+            composing.clear()
+            candidates = emptyList()
+            bestGuess = ""
+        } else {
+            ic.deleteSurroundingText(typed.length, 0)
+            ic.commitText(text, 1)
+            // The typed code was logged letter by letter: take it back off the log.
+            val top = undoLog.lastOrNull()
+            if (top != null && top.endsWith(typed)) {
+                val rest = top.dropLast(typed.length)
+                if (rest.isEmpty()) undoLog.removeLast() else undoLog[undoLog.lastIndex] = rest
+            }
+        }
+        recordInsert(text)
+        commit(" ")
+        lastAutoCorrection = text to typed
+        return true
     }
 
     /** Keeps the word exactly as typed (no auto-correction). */
@@ -578,7 +688,9 @@ class KeyboardController(
             list = engine.candidates(latin, 3)
         }
         // First chip = what space commits; last chip keeps the English letters.
-        candidates = if (livePreview) (list + latin).distinct() else emptyList()
+        // A shortcut ("gm") goes first, because space expands it.
+        val shortcut = shortcutFor(latin)
+        candidates = if (livePreview) (listOfNotNull(shortcut) + list + latin).distinct() else emptyList()
     }
 
     /**
@@ -592,6 +704,7 @@ class KeyboardController(
         val word = if (corrected) bestGuess else primary
         val ic = inputConnection()
         if (corrected) ic?.commitText(word, 1) else ic?.finishComposingText()
+        recordInsert(word)
         composing.clear()
         candidates = emptyList()
         bestGuess = ""
@@ -608,13 +721,14 @@ class KeyboardController(
         if (before != "$corrected ") return false
         ic.deleteSurroundingText(corrected.length + 1, 0)
         ic.commitText(original, 1)
+        clearUndo()
         learn(original)
         updateAutoCaps()
         return true
     }
 
     private fun learn(word: String) {
-        if (!learnWords || restrictedField || word.none { it in '\u0D80'..'\u0DFF' }) return
+        if (!learnWords || incognito || restrictedField || word.none { it in '\u0D80'..'\u0DFF' }) return
         val info = editorInfo
         if (info != null && info.imeOptions and IME_FLAG_NO_PERSONALIZED_LEARNING != 0) return // incognito tabs etc.
         onWordLearned(word)
@@ -627,6 +741,7 @@ class KeyboardController(
             return
         }
         val ic = inputConnection() ?: return
+        clearUndo() // Backspace edits the text by hand; Undo only takes back whole pieces
         val selected = ic.getSelectedText(0)
         if (!selected.isNullOrEmpty()) {
             ic.commitText("", 1)
@@ -655,7 +770,77 @@ class KeyboardController(
 
     private fun commit(text: String) {
         inputConnection()?.commitText(text, 1)
+        recordInsert(text)
     }
+
+    /** Adds [text] to the undo log: letters join the current word; spaces / punctuation end it. */
+    private fun recordInsert(text: String) {
+        if (text.isEmpty()) return
+        if (!redoing) redoLog.clear()
+        val top = undoLog.lastOrNull()
+        val joins = top != null && (
+            text.isBlank() ||
+                (text.length == 1 && !text[0].isWhitespace() && !top.last().isWhitespace())
+            )
+        if (joins) {
+            undoLog[undoLog.lastIndex] = top + text
+        } else {
+            undoLog.addLast(text)
+            while (undoLog.size > MAX_UNDO) undoLog.removeFirst()
+        }
+    }
+
+    private fun clearUndo() {
+        undoLog.clear()
+        redoLog.clear()
+    }
+
+    /**
+     * Undo: takes back the word being typed, or the last piece SinhalaX put in (word + space,
+     * suggestion, emoji, paste, shortcut…). False when there is nothing it can safely undo
+     * (e.g. the cursor moved); the caller can then try the app's own undo.
+     */
+    fun undo(): Boolean {
+        endVoiceText()
+        lastAutoCorrection = null
+        val ic = inputConnection() ?: return false
+        if (composing.isNotEmpty()) {
+            ic.setComposingText("", 1)
+            ic.finishComposingText()
+            composing.clear()
+            candidates = emptyList()
+            bestGuess = ""
+            updateAutoCaps()
+            refreshTranslateText()
+            return true
+        }
+        val entry = undoLog.lastOrNull() ?: return false
+        if (ic.getTextBeforeCursor(entry.length, 0)?.toString() != entry) {
+            clearUndo() // the text changed under us: don't delete the wrong thing
+            return false
+        }
+        ic.deleteSurroundingText(entry.length, 0)
+        undoLog.removeLast()
+        redoLog.addLast(entry)
+        updateAutoCaps()
+        refreshTranslateText()
+        return true
+    }
+
+    /** Redo: puts back what Undo took away. */
+    fun redo(): Boolean {
+        val entry = redoLog.removeLastOrNull() ?: return false
+        endVoiceText()
+        commitComposing()
+        redoing = true
+        commit(entry)
+        redoing = false
+        updateAutoCaps()
+        refreshTranslateText()
+        return true
+    }
+
+    val canRedo: Boolean get() = redoLog.isNotEmpty()
 
     /**
      * English only: turns Shift on for the first letter of a sentence.
@@ -711,6 +896,12 @@ class KeyboardController(
 
         /** Longest text the translate box holds (one request). */
         const val MAX_TRANSLATE = 1000
+
+        /** How many pieces Undo remembers. */
+        const val MAX_UNDO = 30
+
+        /** Same limit as ShortcutRepository.MAX_KEY. */
+        const val MAX_SHORTCUT_KEY = 20
         /** EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING (API 26), as a literal so it works on every version. */
         const val IME_FLAG_NO_PERSONALIZED_LEARNING = 0x1000000
     }

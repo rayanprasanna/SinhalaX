@@ -12,6 +12,7 @@ import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.Translate
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material3.Icon
@@ -40,7 +41,7 @@ fun PrivacyScreen(onBack: () -> Unit) {
                 "Your typing never goes online",
                 "Typing, suggestions and fancy text all work offline. The app goes online only for the Themes store " +
                     "(backgrounds and sounds you pick), for GIFs, stickers and memes while you have them open, and " +
-                    "for Translate and voice typing while you use them. Nothing else you type in other apps is ever sent.",
+                    "for Translate, voice typing and emoji style images while you use them. Nothing else you type in other apps is ever sent.",
             )
         }
         item {
@@ -70,6 +71,14 @@ fun PrivacyScreen(onBack: () -> Unit) {
                 "The mic uses your phone's own speech service (usually Google's) only while the voice panel is " +
                     "listening. SinhalaX doesn't record or keep audio; it receives the words and types them. " +
                     "The microphone permission is asked for the first time you tap the mic.",
+            )
+        }
+        item {
+            InfoCard(
+                Icons.Outlined.VisibilityOff,
+                "Incognito and shortcuts",
+                "Turn on Incognito (⚙ on the keyboard toolbar → Tools) and the keyboard learns no words and keeps " +
+                    "no clipboard, emoji or GIF history until you turn it off. Your shortcuts are saved only on this phone.",
             )
         }
         item {

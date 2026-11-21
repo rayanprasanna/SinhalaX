@@ -1,6 +1,5 @@
 package dev.valhalla.sinhalax.ui.screens
 
-import androidx.compose.material3.FilterChip
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -18,7 +17,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -39,8 +37,8 @@ import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.SwapVert
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -75,16 +73,15 @@ import androidx.core.content.FileProvider
 import dev.valhalla.sinhalax.engine.FancyText
 import dev.valhalla.sinhalax.engine.FmConverter
 import dev.valhalla.sinhalax.ime.StickerSender
-import dev.valhalla.sinhalax.store.KlipyApi
 import dev.valhalla.sinhalax.keyboard.icon
 import dev.valhalla.sinhalax.store.AnimatedRemoteImage
-import dev.valhalla.sinhalax.store.RemoteImage
+import dev.valhalla.sinhalax.store.KlipyApi
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun StudioScreen() {
-    var tab by rememberSaveable { mutableIntStateOf(0) }
+fun StudioScreen(startTab: Int = 0, startRequest: Int = 0) {
+    // startRequest changes each time the keyboard asks for a tab (e.g. FM convert).
+    var tab by rememberSaveable(startRequest) { mutableIntStateOf(startTab) }
     val tabs = listOf("Fancy text", "FM converter", "GIFs")
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.padding(horizontal = 16.dp)) {
@@ -192,7 +189,6 @@ private fun ResultRow(label: String?, value: String, onCopy: () -> Unit) {
 
 // ------------------------------------------------------------------ FM converter
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun FmStudio() {
     val context = LocalContext.current
@@ -321,7 +317,7 @@ private fun MediaStudio() {
         try {
             items = if (submitted.isBlank()) KlipyApi.trending(context, kind, perPage = 48).items
             else KlipyApi.search(context, kind, submitted, perPage = 48).items
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             error = "Couldn't load ${kind.label}. Check your connection."
         }
     }
@@ -425,7 +421,7 @@ private suspend fun shareMedia(context: Context, media: KlipyApi.Media, query: S
         shareFile(context, file, mime, "Share")
         KlipyApi.Recents.add(context, media)
         KlipyApi.reportShare(context, media.kind, media.slug, query)
-    } catch (e: Exception) {
+    } catch (_: Exception) {
         Toast.makeText(context, "Couldn't share this. Try again.", Toast.LENGTH_SHORT).show()
     }
 }

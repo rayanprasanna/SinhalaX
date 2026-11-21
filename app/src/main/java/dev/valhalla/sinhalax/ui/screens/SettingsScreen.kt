@@ -7,17 +7,19 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.MenuBook
+import androidx.compose.material.icons.automirrored.outlined.VolumeUp
+import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.Dialpad
+import androidx.compose.material.icons.outlined.Lightbulb
+import androidx.compose.material.icons.outlined.School
+import androidx.compose.material.icons.outlined.Spellcheck
+import androidx.compose.material.icons.outlined.SwipeLeft
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material.icons.outlined.Vibration
 import androidx.compose.material.icons.outlined.VisibilityOff
-import androidx.compose.material.icons.automirrored.outlined.VolumeUp
-import androidx.compose.material.icons.outlined.Lightbulb
-import androidx.compose.material.icons.outlined.School
-import androidx.compose.material.icons.outlined.Spellcheck
-import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SegmentedButton
@@ -32,12 +34,17 @@ import androidx.compose.ui.unit.dp
 import dev.valhalla.sinhalax.SinhalaXApp
 import dev.valhalla.sinhalax.data.KeyboardSettings
 import dev.valhalla.sinhalax.keyboard.KeyboardPreview
-import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(app: SinhalaXApp, settings: KeyboardSettings, onOpenLearnedWords: () -> Unit) {
+fun SettingsScreen(
+    app: SinhalaXApp,
+    settings: KeyboardSettings,
+    onOpenLearnedWords: () -> Unit,
+    onOpenShortcuts: () -> Unit = {},
+) {
     val scope = rememberCoroutineScope()
     fun update(transform: (KeyboardSettings) -> KeyboardSettings) {
         scope.launch { app.settings.update(transform) }
@@ -120,6 +127,41 @@ fun SettingsScreen(app: SinhalaXApp, settings: KeyboardSettings, onOpenLearnedWo
                 }
             }
 
+            item { SectionLabel("Tools") }
+            item {
+                SettingsCard {
+                    SwitchRow(
+                        "Shortcuts",
+                        "Type a short code like gm, then space, to put in your saved text",
+                        settings.shortcutsEnabled,
+                        Icons.Outlined.Bolt,
+                    ) { v -> update { it.copy(shortcutsEnabled = v) } }
+                    TextButton(
+                        onClick = onOpenShortcuts,
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                    ) { Text("Manage shortcuts") }
+                    SwitchRow(
+                        "Slide gestures",
+                        "Slide on space to move the cursor; slide left on ⌫ to select words, let go to delete them",
+                        settings.slideGestures,
+                        Icons.Outlined.SwipeLeft,
+                    ) { v -> update { it.copy(slideGestures = v) } }
+                    SwitchRow(
+                        "Incognito",
+                        "Don't learn words or keep clipboard, emoji and GIF history (🕶 shows on the toolbar)",
+                        settings.incognito,
+                        Icons.Outlined.VisibilityOff,
+                    ) { v -> update { it.copy(incognito = v) } }
+                    Text(
+                        "More tools (text edit, one-hand, number pad, calculator, repeat text) are in the keyboard: " +
+                            "tap ⚙ (or SinhalaX) on the toolbar. Long-press any tool there to pin it to the toolbar.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                    )
+                }
+            }
+
             item { SectionLabel("Size") }
             item {
                 SettingsCard {
@@ -172,7 +214,7 @@ fun SettingsScreen(app: SinhalaXApp, settings: KeyboardSettings, onOpenLearnedWo
                 InfoCard(
                     Icons.Outlined.VisibilityOff,
                     "Nothing leaves your phone",
-                    "Typing works offline and never sends what you type. Only the Themes store, GIFs, stickers and memes, Translate (the translate box text) and voice typing go online, while you use them.",
+                    "Typing works offline and never sends what you type. Only the Themes store, GIFs, stickers and memes, Translate (the translate box text), voice typing and emoji style images go online, while you use them.",
                 )
             }
             item {

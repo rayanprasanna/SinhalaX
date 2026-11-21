@@ -288,9 +288,10 @@ private suspend fun sendAndDescribe(
     media: KlipyApi.Media,
     query: String?,
     send: suspend (KlipyApi.Media, String?) -> StickerOutcome,
+    incognito: Boolean,
 ): String? = when (send(media, query)) {
     StickerOutcome.SENT -> {
-        KlipyApi.Recents.add(context, media)
+        if (!incognito) KlipyApi.Recents.add(context, media)
         null
     }
     StickerOutcome.NOT_SUPPORTED -> "This app doesn't accept ${kind.label} here."
@@ -386,7 +387,7 @@ fun MediaContent(
             feedback.press()
             sendingKey = media.cacheKey
             scope.launch {
-                message = sendAndDescribe(context, kind, media, query, send)
+                message = sendAndDescribe(context, kind, media, query, send, controller.incognito)
                 sendingKey = null
             }
         }
@@ -608,7 +609,7 @@ fun MediaSearchPanel(
         feedback.press()
         sendingKey = media.cacheKey
         scope.launch {
-            message = sendAndDescribe(context, kind, media, typed.ifEmpty { null }, send)
+            message = sendAndDescribe(context, kind, media, typed.ifEmpty { null }, send, controller.incognito)
             sendingKey = null
         }
     }

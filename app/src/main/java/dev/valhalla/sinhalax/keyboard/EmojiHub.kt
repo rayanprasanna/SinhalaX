@@ -1,6 +1,7 @@
 package dev.valhalla.sinhalax.keyboard
 
 import android.content.Context
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -8,11 +9,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -33,6 +36,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -41,13 +45,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.valhalla.sinhalax.store.EmojiImages
+import dev.valhalla.sinhalax.store.EmojiStyle
 import dev.valhalla.sinhalax.store.KlipyApi
+import dev.valhalla.sinhalax.store.LocalEmojiStyle
 import kotlinx.coroutines.launch
 
 /** Recently used emoji and kaomoji, newest first. Kept on the phone only. */
@@ -132,7 +141,7 @@ fun EmojiHub(
     fun insert(text: String) {
         feedback.press()
         controller.insertText(text)
-        EmojiRecents.add(context, text)
+        if (!controller.incognito) EmojiRecents.add(context, text)
     }
 
     val barHeight = 44.dp
@@ -177,6 +186,8 @@ fun EmojiHub(
                 controller.showKeys()
             }) { Text("ABC", color = theme.text, fontSize = 14.sp, fontWeight = FontWeight.Bold) }
 
+            Spacer(Modifier.width(6.dp)) // gap between ABC and 🔍
+
             BarButton(theme, onClick = {
                 feedback.press()
                 // Searching works on KLIPY content; from the emoji tabs it searches GIFs.
@@ -186,13 +197,16 @@ fun EmojiHub(
                 controller.startSearch()
             }) { Icon(Icons.Outlined.Search, "Search GIFs, stickers and memes", tint = theme.text, modifier = Modifier.size(22.dp)) }
 
-            LazyRow(
-                Modifier.weight(1f),
+            // All six tabs share the space evenly, so none is cut off under ⌫ (no scrolling).
+            Row(
+                Modifier
+                    .weight(1f)
+                    .padding(horizontal = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                items(EmojiTab.entries.toList()) { t ->
-                    TabButton(t, selected = tab == t, theme = theme) {
+                EmojiTab.entries.forEach { t ->
+                    TabButton(t, selected = tab == t, theme = theme, modifier = Modifier.weight(1f)) {
                         feedback.press()
                         tab = t
                     }
@@ -220,15 +234,20 @@ private fun BarButton(theme: KeyboardTheme, onClick: () -> Unit, content: @Compo
 }
 
 @Composable
-private fun TabButton(tab: EmojiTab, selected: Boolean, theme: KeyboardTheme, onClick: () -> Unit) {
+private fun TabButton(
+    tab: EmojiTab,
+    selected: Boolean,
+    theme: KeyboardTheme,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
     val tint = if (selected) theme.accent else theme.toolbarText.copy(alpha = 0.85f)
     Box(
-        Modifier
+        modifier
             .height(36.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(if (selected) theme.accent.copy(alpha = 0.18f) else Color.Transparent)
-            .clickable(onClickLabel = tab.label, onClick = onClick)
-            .padding(horizontal = 10.dp),
+            .clickable(onClickLabel = tab.label, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         val icon: ImageVector? = when (tab) {
@@ -243,9 +262,10 @@ private fun TabButton(tab: EmojiTab, selected: Boolean, theme: KeyboardTheme, on
             Text(
                 tab.label,
                 color = tint,
-                fontSize = if (tab == EmojiTab.KAOMOJI) 11.sp else 13.sp,
+                fontSize = if (tab == EmojiTab.KAOMOJI) 10.sp else 13.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
+                softWrap = false,
             )
         }
     }
@@ -277,7 +297,7 @@ private fun CategorizedEmoji(theme: KeyboardTheme, onPick: (String) -> Unit) {
                         .background(if (i == current) theme.accent.copy(alpha = 0.2f) else Color.Transparent)
                         .clickable(onClickLabel = c.name) { scope.launch { state.scrollToItem(headerIndex[i]) } },
                     contentAlignment = Alignment.Center,
-                ) { Text(c.icon, fontSize = 18.sp) }
+                ) { EmojiGlyph(c.icon, size = 22.dp, fontSize = 18.sp) }
             }
         }
         LazyVerticalGrid(
@@ -332,5 +352,28 @@ private fun EmojiCell(emoji: String, onPick: (String) -> Unit) {
             .clip(RoundedCornerShape(10.dp))
             .clickable { onPick(emoji) },
         contentAlignment = Alignment.Center,
-    ) { Text(emoji, fontSize = 26.sp) }
+    ) { EmojiGlyph(emoji, size = 30.dp, fontSize = 26.sp) }
+}
+
+/**
+ * One emoji in the chosen Emoji style (Tools → Emoji style). The phone's own emoji shows while
+ * the image loads, when offline, or with "Phone default".
+ */
+@Composable
+fun EmojiGlyph(emoji: String, size: Dp, fontSize: TextUnit) {
+    val style = LocalEmojiStyle.current
+    if (style == EmojiStyle.SYSTEM) {
+        Text(emoji, fontSize = fontSize)
+        return
+    }
+    val context = LocalContext.current
+    val image by produceState(EmojiImages.cached(style, emoji), style, emoji) {
+        if (value == null) value = EmojiImages.load(context.applicationContext, style, emoji)
+    }
+    val bitmap = image
+    if (bitmap != null) {
+        Image(bitmap, contentDescription = emoji, modifier = Modifier.size(size), filterQuality = FilterQuality.Medium)
+    } else {
+        Text(emoji, fontSize = fontSize)
+    }
 }

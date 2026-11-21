@@ -56,6 +56,17 @@ class SettingsRepository(context: Context) {
             soundPackId = p[Keys.SOUND_ID] ?: d.soundPackId,
             soundPackPath = p[Keys.SOUND_PATH] ?: d.soundPackPath,
             soundVolume = p[Keys.SOUND_VOLUME] ?: d.soundVolume,
+            incognito = p[Keys.INCOGNITO] ?: d.incognito,
+            oneHand = p[Keys.ONE_HAND] ?: d.oneHand,
+            toolbarItems = p[Keys.TOOLBAR] ?: d.toolbarItems,
+            shortcutsEnabled = p[Keys.SHORTCUTS] ?: d.shortcutsEnabled,
+            slideGestures = p[Keys.SLIDE_GESTURES] ?: d.slideGestures,
+            emojiStyle = p[Keys.EMOJI_STYLE] ?: d.emojiStyle,
+            floating = p[Keys.FLOATING] ?: d.floating,
+            floatX = p[Keys.FLOAT_X] ?: d.floatX,
+            floatY = p[Keys.FLOAT_Y] ?: d.floatY,
+            floatWidth = p[Keys.FLOAT_WIDTH] ?: d.floatWidth,
+            customTheme = p[Keys.CUSTOM_THEME] ?: d.customTheme,
         )
     }
 
@@ -82,6 +93,17 @@ class SettingsRepository(context: Context) {
         p[Keys.SOUND_ID] = s.soundPackId
         p[Keys.SOUND_PATH] = s.soundPackPath
         p[Keys.SOUND_VOLUME] = s.soundVolume
+        p[Keys.INCOGNITO] = s.incognito
+        p[Keys.ONE_HAND] = s.oneHand
+        p[Keys.TOOLBAR] = s.toolbarItems
+        p[Keys.SHORTCUTS] = s.shortcutsEnabled
+        p[Keys.SLIDE_GESTURES] = s.slideGestures
+        p[Keys.EMOJI_STYLE] = s.emojiStyle
+        p[Keys.FLOATING] = s.floating
+        p[Keys.FLOAT_X] = s.floatX
+        p[Keys.FLOAT_Y] = s.floatY
+        p[Keys.FLOAT_WIDTH] = s.floatWidth
+        p[Keys.CUSTOM_THEME] = s.customTheme
     }
 
     private object Keys {
@@ -107,5 +129,16 @@ class SettingsRepository(context: Context) {
         val SOUND_ID = stringPreferencesKey("sound_pack_id")
         val SOUND_PATH = stringPreferencesKey("sound_pack_path")
         val SOUND_VOLUME = floatPreferencesKey("sound_volume")
+        val INCOGNITO = booleanPreferencesKey("incognito")
+        val ONE_HAND = stringPreferencesKey("one_hand")
+        val TOOLBAR = stringPreferencesKey("toolbar_items")
+        val SHORTCUTS = booleanPreferencesKey("shortcuts_enabled")
+        val SLIDE_GESTURES = booleanPreferencesKey("slide_gestures")
+        val EMOJI_STYLE = stringPreferencesKey("emoji_style")
+        val FLOATING = booleanPreferencesKey("floating")
+        val FLOAT_X = floatPreferencesKey("float_x")
+        val FLOAT_Y = floatPreferencesKey("float_y")
+        val FLOAT_WIDTH = floatPreferencesKey("float_width")
+        val CUSTOM_THEME = stringPreferencesKey("custom_theme")
     }
 }

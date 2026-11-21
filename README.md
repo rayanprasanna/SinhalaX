@@ -106,6 +106,59 @@ New **Studio** tab (Fancy text · FM converter · Stickers) and two new keyboard
   that listens straight away with the phone's speech service — `si-LK` in Sinhala, `en-US` in English (the
   globe button switches). Words show as they're heard and are committed when you stop; in translate mode they
   go into the translate box. First use opens an invisible screen for the microphone permission.
+- **DIY theme studio (v0.10)** (`ui/screens/ThemeStudio.kt`, `keyboard/CustomTheme.kt`): Themes → **DIY**.
+  Sections: Background (14 solids / gradients) · Keys (solid or glass colours, shape Square / Rounded / Soft /
+  Pill, outline) · Text & accent (with a readability warning) · Photo (your own picture, copied into the app
+  at ≤1600 px, never uploaded; darken 0–80 %, blur None / Soft / Strong — blur by downscale + filtered
+  upscale, so it works on Android 7+). Every change shows live in the preview; **Apply** saves "My theme"
+  (`themeId = "custom"`, JSON in `customTheme`) and replaces a downloaded background, like built-in themes.
+  It starts from your current theme. The selected swatch gets an accent outline and ✓.
+- **Phase 3 (v0.9)**:
+  - **Emoji style** (`store/EmojiStyles.kt`, Tools → Look & feel): Phone default, **Google (Noto)**, **Twemoji**
+    or **OpenMoji** — free, openly licensed sets only (Apple / Samsung / Facebook / Microsoft are copyrighted).
+    Images load as you browse (jsDelivr; unpkg / GitHub backups), are cached in app storage, and "Download 3 MB"
+    saves a whole set for offline use. File names were checked against emoji-datasource 16.0.0 and OpenMoji
+    17.0.0 data for all 1,136 emoji in the panel. Only the keyboard's look changes; chats get normal emoji.
+    Credits shown in the panel: Noto (Apache 2.0), Twemoji (CC BY 4.0), OpenMoji (CC BY-SA 4.0).
+  - **Floating keyboard** (`keyboard/Floating.kt`, Tools → Floating): the keyboard becomes a card you drag
+    anywhere (handle bar: ⇔ width 70/85/100 %, drag the middle, ⤓ dock). The IME window fills the screen but
+    `onComputeInsets` limits touches to the card and tells the app nothing covers it (no resizing), like Gboard.
+    Position and width are remembered. One-hand mode is ignored while floating.
+- **Phase 2 tools (v0.8)**:
+  - **Secret text** (`core/engine/SecretText.kt`): lock the selected text / current line with a 4–8 digit PIN →
+    `🔐SX1:…` (AES-256-GCM, key = PBKDF2-HMAC-SHA256 60k rounds, own Base64url so it works on Android 7).
+    Unlock reads the selection, the clipboard or the text before the cursor; the message is shown only inside
+    the keyboard (Insert to paste it). A wrong PIN or a changed message is detected. For everyday privacy.
+  - **Phrase studio** (`keyboard/PhraseData.kt`): ready Sinhala phrases (Greetings, Wishes, Love, Thanks,
+    Daily, Festivals, Sympathy) plus "Mine" (your shortcuts), with decorations (✨ 💖 🌸 🎀 『』 ꧁꧂ ★彡 ━━).
+  - **Undo / Redo**: word-by-word undo of what SinhalaX put in (word + space, suggestion, emoji, paste,
+    shortcut, voice). Falls back to the app's own undo (Ctrl+Z) when there's nothing safe to take back.
+    Pin ↶ to the toolbar; also in Text edit.
+  - **Slide gestures** (setting, on by default): slide on space to move the cursor (shows ◀ ▶); slide left
+    on ⌫ to select whole words, let go to delete them (shows ⌫ 2…). With it on, a ⌫ tap deletes on release.
+- **Tools hub (v0.7)** (`keyboard/Tools.kt`): tap **⚙** (or **SinhalaX**) on the toolbar; the gear inside
+  the hub opens the app's full Settings. Tabs **Tools · Look & feel · App**.
+  Tiles turn green with an **ON** badge when a tool is on; **long-press any tool to pin it to (or remove it
+  from) the toolbar** (max 8, 📌 shows pinned ones). Look & feel has *Your toolbar* (tap a button to move it
+  left, ✕ to remove, Reset), quick switches (sound, vibrate, number row, letter hints) and Themes. App opens
+  SinhalaX screens (Settings, Themes, Studio, Shortcuts, Privacy, Guide) via `MainActivity.EXTRA_OPEN`.
+  - **Text edit**: ▲▼◀▶, ◀ word / word ▶, ⇤ Start / End ⇥, **Select** mode (moves extend the selection),
+    Select all, Copy, Cut, Paste, Undo / Redo (the app's own Ctrl+Z).
+  - **One-hand**: keys shrink to 82% on one side; ⇄ switches side, ⤢ goes back to full width.
+  - **Number pad**: big 0–9 with + − , * # . for OTPs, phone numbers and USSD codes.
+  - **Shortcuts**: `gm` + space → "සුභ උදෑසනක්! ☀️" (works in Sinhala and English mode; shows as the first
+    suggestion; backspace right after puts the code back). Managed in the app (Settings → Tools → Manage
+    shortcuts); stored on the phone only (`data/ShortcutRepository.kt`). Four Sinhala examples to start.
+  - **Calculator** (`core/engine/Calculator.kt`): + − × ÷ % ( ), live answer, **Insert** puts the answer
+    (long-press: the whole "250×4 = 1000"). BigDecimal, so 0.1+0.2 = 0.3; 200+10% = 220.
+  - **Repeat text** (`core/engine/TextRepeater.kt`): selected text (or the current line) × 2–100, joined
+    by space / new line / nothing, optionally numbered; replaces the original. Capped at 20,000 characters.
+  - **Incognito**: no learning, no clipboard / emoji / GIF history while on; 🕶 shows next to SinhalaX.
+- **Toolbar (v0.6.3)**: **SinhalaX** wordmark at the top left (opens the app), then language · Aa · 😊 Emoji ·
+  **GIF** · 📋 · 文A · 🎤 · ⚙, spread evenly to fit any width. 😊 and GIF open the same panel (emoji tabs and
+  KLIPY GIF / Sticker / Meme tabs are all there) — GIF just opens it on the KLIPY side, so people can see GIFs
+  exist. Tapping the lit button closes the panel; tapping the other switches tab. Hide-keyboard moved to the
+  system's ˅ button.
 - **Language icons**: the language key and toolbar show a globe with "a" (English) or "අ" (Sinhala) for the
   language you're typing in (`keyboard/LanguageIcons.kt`, clean vector redraw of the supplied designs).
 

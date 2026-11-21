@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.Card
@@ -31,6 +32,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -46,6 +49,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import dev.valhalla.sinhalax.SinhalaXApp
 import dev.valhalla.sinhalax.data.KeyboardSettings
 import dev.valhalla.sinhalax.keyboard.KeyboardPreview
@@ -53,11 +57,12 @@ import dev.valhalla.sinhalax.keyboard.KeyboardTheme
 import dev.valhalla.sinhalax.keyboard.KeyboardThemes
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ThemesScreen(app: SinhalaXApp, settings: KeyboardSettings) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
-    val tabs = listOf("Built-in", "Backgrounds", "Sounds")
+    val tabs = listOf("Built-in", "DIY", "Backgrounds", "Sounds")
+    // The DIY studio's unsaved theme, shown in the preview while that tab is open.
+    var draft by remember { mutableStateOf<KeyboardSettings?>(null) }
 
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.padding(horizontal = 16.dp)) {
@@ -72,18 +77,28 @@ fun ThemesScreen(app: SinhalaXApp, settings: KeyboardSettings) {
                         selected = tab == index,
                         onClick = { tab = index },
                         shape = SegmentedButtonDefaults.itemShape(index, tabs.size),
-                    ) { Text(label) }
+                        icon = {}, // no check mark: four tabs need the room
+                    ) {
+                        // Shrinks long labels ("Backgrounds") to fit instead of cutting them off.
+                        Text(
+                            label,
+                            maxLines = 1,
+                            softWrap = false,
+                            autoSize = TextAutoSize.StepBased(minFontSize = 10.sp, maxFontSize = 14.sp, stepSize = 0.5.sp),
+                        )
+                    }
                 }
             }
         }
         Box(Modifier.weight(1f)) {
             when (tab) {
                 0 -> BuiltInThemes(app, settings)
-                1 -> BackgroundStore(app, settings)
+                1 -> ThemeStudio(app, settings, onDraft = { draft = it })
+                2 -> BackgroundStore(app, settings)
                 else -> SoundStore(app, settings)
             }
         }
-        KeyboardPreview(settings)
+        KeyboardPreview(if (tab == 1) draft ?: settings else settings)
     }
 }
 

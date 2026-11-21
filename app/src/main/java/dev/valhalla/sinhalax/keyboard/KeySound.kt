@@ -55,14 +55,37 @@ fun rememberKeySound(path: String): KeySoundPlayer? {
 
 /** Decodes the background image at roughly screen width, off the main thread. */
 @Composable
-fun rememberBackgroundImage(path: String): ImageBitmap? {
+fun rememberBackgroundImage(path: String, blur: Int = 0): ImageBitmap? {
     val context = LocalContext.current
     val targetWidth = context.resources.displayMetrics.widthPixels
-    val image by produceState<ImageBitmap?>(initialValue = null, path) {
-        value = if (path.isEmpty()) null else withContext(Dispatchers.IO) { decode(path, targetWidth) }
+    val image by produceState<ImageBitmap?>(initialValue = null, path, blur) {
+        value = if (path.isEmpty()) {
+            null
+        } else {
+            withContext(Dispatchers.IO) { if (blur > 0) decodeBlurred(path, targetWidth, blur) else decode(path, targetWidth) }
+        }
     }
     return image
 }
+
+/**
+ * Soft blur that works on every Android version: decode the photo tiny, then scale it back up
+ * with filtering. blur 1 = soft (1/12 size), 2 = strong (1/28).
+ */
+private fun decodeBlurred(path: String, targetWidth: Int, blur: Int): ImageBitmap? = runCatching {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeFile(path, bounds)
+    if (bounds.outWidth <= 0) return null
+    val tinyWidth = (targetWidth / if (blur >= 2) 28 else 12).coerceAtLeast(8)
+    var sample = 1
+    while (bounds.outWidth / (sample * 2) >= tinyWidth) sample *= 2
+    val small = BitmapFactory.decodeFile(path, BitmapFactory.Options().apply { inSampleSize = sample }) ?: return null
+    val scale = tinyWidth.toFloat() / small.width
+    val tiny = Bitmap.createScaledBitmap(small, tinyWidth, (small.height * scale).toInt().coerceAtLeast(1), true)
+    val outWidth = targetWidth / 3
+    val out = Bitmap.createScaledBitmap(tiny, outWidth, (tiny.height * outWidth.toFloat() / tiny.width).toInt().coerceAtLeast(1), true)
+    out.asImageBitmap()
+}.getOrNull()
 
 private fun decode(path: String, targetWidth: Int): ImageBitmap? = runCatching {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }

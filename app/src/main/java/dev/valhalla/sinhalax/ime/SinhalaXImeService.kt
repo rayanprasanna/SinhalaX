@@ -1,11 +1,12 @@
 package dev.valhalla.sinhalax.ime
 
-import dev.valhalla.sinhalax.keyboard.StickerOutcome
-import dev.valhalla.sinhalax.store.KlipyApi
 import android.content.ClipboardManager
 import android.content.Intent
+import android.graphics.Rect
 import android.inputmethodservice.InputMethodService
 import android.view.View
+import android.view.ViewGroup
+import android.view.Window
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import androidx.compose.runtime.mutableStateOf
@@ -30,7 +31,9 @@ import dev.valhalla.sinhalax.engine.SinglishTransliterator
 import dev.valhalla.sinhalax.keyboard.KeyboardController
 import dev.valhalla.sinhalax.keyboard.Language
 import dev.valhalla.sinhalax.keyboard.SinhalaXKeyboard
+import dev.valhalla.sinhalax.keyboard.StickerOutcome
 import dev.valhalla.sinhalax.keyboard.TranslateState
+import dev.valhalla.sinhalax.store.KlipyApi
 import dev.valhalla.sinhalax.store.TranslateApi
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -66,6 +69,14 @@ class SinhalaXImeService :
     private val clipItems = mutableStateOf<List<String>>(emptyList())
     private val canSendSticker = mutableStateOf(false)
 
+    /** Floating keyboard: the card's rectangle (window pixels) and whether the window is in floating layout. */
+    private var floatingBounds: Rect? = null
+    private var floatingApplied = false
+    private var inputView: View? = null
+
+    /** Shortcuts (text expansion), lower-case key → text. */
+    @Volatile private var shortcutMap: Map<String, String> = emptyMap()
+
     /** The translate box: an in-keyboard editor that typing goes into while translating. */
     private val translateBox: BaseInputConnection by lazy { BaseInputConnection(View(this), true) }
     private val translateState = TranslateState()
@@ -90,6 +101,7 @@ class SinhalaXImeService :
             predictor = { app.prediction.predictor.value },
             onWordLearned = { word -> app.prediction.learn(word) },
             translateConnection = { translateBox },
+            shortcuts = { shortcutMap },
         )
         watchTranslation()
 
@@ -97,10 +109,14 @@ class SinhalaXImeService :
             app.settings.settings.collect { settings ->
                 settingsState.value = settings
                 controller.applySettings(settings)
+                if (settings.floating != floatingApplied) applyWindowLayout(settings.floating)
             }
         }
         lifecycleScope.launch {
             app.clipboard.items.collect { clipItems.value = it }
+        }
+        lifecycleScope.launch {
+            app.shortcuts.items.collect { list -> shortcutMap = list.associate { it.key.lowercase() to it.text } }
         }
         clipboardManager.addPrimaryClipChangedListener(clipListener)
 
@@ -115,7 +131,7 @@ class SinhalaXImeService :
             decor.setViewTreeViewModelStoreOwner(this)
             decor.setViewTreeSavedStateRegistryOwner(this)
         }
-        return ComposeView(this).apply {
+        return ComposeView(this).also { inputView = it }.apply {
             setViewTreeLifecycleOwner(this@SinhalaXImeService)
             setViewTreeViewModelStoreOwner(this@SinhalaXImeService)
             setViewTreeSavedStateRegistryOwner(this@SinhalaXImeService)
@@ -124,16 +140,73 @@ class SinhalaXImeService :
                     controller = controller,
                     settings = settingsState.value,
                     clipItems = clipItems.value,
-                    onOpenApp = ::openApp,
+                    onOpenApp = { openApp(null) },
+                    onOpenAppScreen = { route -> openApp(route) },
+                    onUpdateSettings = { change -> lifecycleScope.launch { app.settings.update(change) } },
                     onDeleteClip = { text -> lifecycleScope.launch { app.clipboard.remove(text) } },
                     onClearClips = { lifecycleScope.launch { app.clipboard.clear() } },
                     canSendSticker = canSendSticker.value,
                     onSendSticker = ::sendSticker,
                     voice = voice,
                     translation = translateState,
+                    allowFloating = true,
+                    onFloatingBounds = { rect ->
+                        if (rect != floatingBounds) {
+                            floatingBounds = rect
+                            window?.window?.decorView?.requestLayout() // recompute the touchable region
+                        }
+                    },
                 )
             }
         }
+    }
+
+    // ---------------------------------------------------------------- floating keyboard
+
+    /**
+     * Floating mode: the IME window fills the screen (transparent) and only the card takes touches.
+     * Docked: the normal bottom-aligned window. Called when the setting changes and on each show.
+     */
+    private fun applyWindowLayout(floating: Boolean) {
+        floatingApplied = floating
+        if (!floating) floatingBounds = null
+        val win = window?.window ?: return
+        val height = if (floating) ViewGroup.LayoutParams.MATCH_PARENT else ViewGroup.LayoutParams.WRAP_CONTENT
+        win.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, height)
+        // The input area and our view must also stretch, or the card can't move above the bottom.
+        win.decorView.findViewById<View>(android.R.id.inputArea)?.let { area ->
+            area.layoutParams?.let { lp ->
+                lp.height = height
+                area.layoutParams = lp
+            }
+        }
+        inputView?.let { view ->
+            view.layoutParams?.let { lp ->
+                lp.height = height
+                view.layoutParams = lp
+            }
+        }
+        win.decorView.requestLayout()
+    }
+
+    override fun onConfigureWindow(win: Window, isFullscreen: Boolean, isCandidatesOnly: Boolean) {
+        super.onConfigureWindow(win, isFullscreen, isCandidatesOnly)
+        if (floatingApplied) win.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+    }
+
+    /**
+     * Floating: tell the app nothing covers it (so it doesn't resize) and take touches only on
+     * the card; everywhere else goes to the app underneath.
+     */
+    override fun onComputeInsets(outInsets: InputMethodService.Insets) {
+        super.onComputeInsets(outInsets)
+        if (!floatingApplied) return
+        val height = window?.window?.decorView?.height ?: return
+        outInsets.contentTopInsets = height
+        outInsets.visibleTopInsets = height
+        outInsets.touchableInsets = InputMethodService.Insets.TOUCHABLE_INSETS_REGION
+        outInsets.touchableRegion.setEmpty()
+        floatingBounds?.let { outInsets.touchableRegion.set(it) }
     }
 
     /** Never switch to the full-screen extract editor in landscape. */
@@ -142,6 +215,18 @@ class SinhalaXImeService :
     override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
         super.onStartInput(attribute, restarting)
         controller.onStartInput(attribute)
+    }
+
+    /**
+     * Called each time the keyboard is shown, including when it reopens in the same text box
+     * (onStartInput only runs for a new box). Start on the letters again, not on a panel that was
+     * left open (tools, calculator, emoji…). Skipped when the app merely restarts input
+     * (e.g. right after a GIF is sent), so an open panel isn't closed under the user.
+     */
+    override fun onStartInputView(editorInfo: EditorInfo?, restarting: Boolean) {
+        super.onStartInputView(editorInfo, restarting)
+        applyWindowLayout(settingsState.value.floating)
+        if (!restarting) controller.onStartInputView()
     }
 
     // ---------------------------------------------------------------- translate
@@ -255,7 +340,8 @@ class SinhalaXImeService :
      */
     private fun onClipChanged() {
         try {
-            if (!settingsState.value.clipboardHistory || controller.restrictedField) return
+            val s = settingsState.value
+            if (!s.clipboardHistory || s.incognito || controller.restrictedField) return
             val clip = clipboardManager.primaryClip ?: return
             // Password managers and banking apps mark copied secrets as sensitive.
             if (clip.description?.extras?.getBoolean(EXTRA_IS_SENSITIVE) == true) return
@@ -270,9 +356,13 @@ class SinhalaXImeService :
         }
     }
 
-    private fun openApp() {
+    /** Opens the app, on [route] (an AppRoutes screen) when given. */
+    private fun openApp(route: String?) {
+        requestHideSelf(0)
         startActivity(
-            Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            Intent(this, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                .apply { if (route != null) putExtra(MainActivity.EXTRA_OPEN, route) },
         )
     }
 

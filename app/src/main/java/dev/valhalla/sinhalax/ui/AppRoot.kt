@@ -28,6 +28,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -48,8 +49,14 @@ import dev.valhalla.sinhalax.ui.screens.LearnedWordsScreen
 import dev.valhalla.sinhalax.ui.screens.OnboardingScreen
 import dev.valhalla.sinhalax.ui.screens.PrivacyScreen
 import dev.valhalla.sinhalax.ui.screens.SettingsScreen
+import dev.valhalla.sinhalax.ui.screens.ShortcutsScreen
+import dev.valhalla.sinhalax.keyboard.AppRoutes
 import dev.valhalla.sinhalax.ui.screens.StudioScreen
 import dev.valhalla.sinhalax.ui.screens.ThemesScreen
+import kotlin.time.Duration.Companion.milliseconds
+
+/** A screen asked for from the keyboard; [id] changes on every request so the same one can repeat. */
+data class OpenRequest(val route: String, val id: Int)
 
 enum class Tab(val label: String, val icon: ImageVector) {
     HOME("Home", Icons.Outlined.Home),
@@ -60,7 +67,7 @@ enum class Tab(val label: String, val icon: ImageVector) {
 }
 
 @Composable
-fun AppRoot(app: SinhalaXApp) {
+fun AppRoot(app: SinhalaXApp, openRequest: OpenRequest? = null) {
     val context = LocalContext.current
     val settings by app.settings.settings.collectAsStateWithLifecycle(initialValue = KeyboardSettings())
     var status by remember { mutableStateOf(ImeStatus.read(context)) }
@@ -87,7 +94,7 @@ fun AppRoot(app: SinhalaXApp) {
         if (needsSetup) {
             cameFromSetup = true
         } else if (cameFromSetup) {
-            delay(SetupCompleteDurationMs)
+            delay(SetupCompleteDurationMs.milliseconds)
             cameFromSetup = false
         }
     }
@@ -113,7 +120,7 @@ fun AppRoot(app: SinhalaXApp) {
                 LaunchedEffect(Unit) { app.prediction.ensureLoaded() }
                 SetupCompleteScreen()
             }
-            Stage.MAIN -> MainScreen(app, settings, status)
+            Stage.MAIN -> MainScreen(app, settings, status, openRequest)
         }
     }
 }
@@ -121,15 +128,36 @@ fun AppRoot(app: SinhalaXApp) {
 private enum class Stage { SETUP, FINISHING, MAIN }
 
 @Composable
-private fun MainScreen(app: SinhalaXApp, settings: KeyboardSettings, status: ImeStatus) {
+private fun MainScreen(app: SinhalaXApp, settings: KeyboardSettings, status: ImeStatus, openRequest: OpenRequest?) {
     var tab by rememberSaveable { mutableStateOf(Tab.HOME) }
     var showPrivacy by rememberSaveable { mutableStateOf(false) }
     var showLearned by rememberSaveable { mutableStateOf(false) }
-    val subPage = showPrivacy || showLearned
+    var showShortcuts by rememberSaveable { mutableStateOf(false) }
+    var studioTab by rememberSaveable { mutableIntStateOf(0) }
+    val subPage = showPrivacy || showLearned || showShortcuts
+
+    // The keyboard's Tools hub can open a screen directly.
+    LaunchedEffect(openRequest?.id) {
+        val route = openRequest?.route ?: return@LaunchedEffect
+        showPrivacy = false
+        showLearned = false
+        showShortcuts = false
+        when (route) {
+            AppRoutes.SETTINGS -> tab = Tab.SETTINGS
+            AppRoutes.THEMES -> tab = Tab.THEMES
+            AppRoutes.STUDIO -> { studioTab = 0; tab = Tab.STUDIO }
+            AppRoutes.STUDIO_FM -> { studioTab = 1; tab = Tab.STUDIO }
+            AppRoutes.GUIDE -> tab = Tab.GUIDE
+            AppRoutes.PRIVACY -> showPrivacy = true
+            AppRoutes.SHORTCUTS -> showShortcuts = true
+            else -> tab = Tab.HOME
+        }
+    }
 
     BackHandler(enabled = subPage) {
         showPrivacy = false
         showLearned = false
+        showShortcuts = false
     }
     BackHandler(enabled = !subPage && tab != Tab.HOME) { tab = Tab.HOME }
 
@@ -154,7 +182,9 @@ private fun MainScreen(app: SinhalaXApp, settings: KeyboardSettings, status: Ime
         },
     ) { padding ->
         Box(Modifier.padding(padding)) {
-            if (showPrivacy) {
+            if (showShortcuts) {
+                ShortcutsScreen(app, settings, onBack = { showShortcuts = false })
+            } else if (showPrivacy) {
                 PrivacyScreen(onBack = { showPrivacy = false })
             } else if (showLearned) {
                 LearnedWordsScreen(app, onBack = { showLearned = false })
@@ -166,8 +196,12 @@ private fun MainScreen(app: SinhalaXApp, settings: KeyboardSettings, status: Ime
                         onOpenPrivacy = { showPrivacy = true },
                     )
                     Tab.THEMES -> ThemesScreen(app, settings)
-                    Tab.STUDIO -> StudioScreen()
-                    Tab.SETTINGS -> SettingsScreen(app, settings, onOpenLearnedWords = { showLearned = true })
+                    Tab.STUDIO -> StudioScreen(startTab = studioTab, startRequest = openRequest?.id ?: 0)
+                    Tab.SETTINGS -> SettingsScreen(
+                        app, settings,
+                        onOpenLearnedWords = { showLearned = true },
+                        onOpenShortcuts = { showShortcuts = true },
+                    )
                     Tab.GUIDE -> GuideScreen()
                 }
             }

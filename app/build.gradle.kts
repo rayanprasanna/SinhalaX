@@ -29,8 +29,8 @@ android {
         minSdk = 24
         //noinspection EditedTargetSdkVersion
         targetSdk = 37
-        versionCode = 19
-        versionName = "0.6.2"
+        versionCode = 24
+        versionName = "0.10.0"
 
         buildConfigField("String", "KLIPY_API_KEY", "\"$klipyApiKey\"")
         buildConfigField("String", "GOOGLE_TRANSLATE_API_KEY", "\"$translateApiKey\"")
@@ -55,11 +55,11 @@ android {
     }
 
 //noinspection WrongGradleMethod
-kotlin {
-    compilerOptions {
-        jvmTarget.set(JvmTarget.JVM_17)
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_17)
+        }
     }
-}
 
     buildFeatures {
         compose = true
